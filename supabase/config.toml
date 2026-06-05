@@ -1,7 +1,4 @@
-{
-  "functions": {
-    "apex-joule": {
-      "verify_jwt": false
-    }
-  }
-}
+project_id = "jefelvpmblmnnipeplql"
+
+[functions.apex-joule]
+verify_jwt = false
