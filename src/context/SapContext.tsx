@@ -8,6 +8,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 
 /* ================================================================
    1. TypeScript Interfaces
@@ -1503,27 +1504,75 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
       apex_joule_enabled: false // Off by default
     });
 
-    // Fire client onboarding handshake Edge Function asynchronously
-    try {
-      const secureToken = "apexops-db-execute-token-2026-06-05";
-      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/client-handshake`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-secure-token": secureToken
-        },
-        body: JSON.stringify({
-          email: clientEmail,
-          project_id: uniqueId,
-          name: clientEmail.split("@")[0],
+    // 1. Explicitly register/invite the client email using Supabase Auth
+    const tempClient = createClient(
+      import.meta.env.VITE_SUPABASE_URL || "",
+      import.meta.env.VITE_SUPABASE_ANON_KEY || "",
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        }
+      }
+    );
+
+    const { data: authData, error: authError } = await tempClient.auth.signUp({
+      email: clientEmail,
+      password: uniqueId,
+      options: {
+        data: {
+          role: "client",
           company_id: userProfile.company_id
-        })
+        }
+      }
+    });
+
+    if (authError) {
+      console.error("Client Auth registration failed:", authError);
+      throw new Error(`Client Authentication registration failed: ${authError.message}`);
+    }
+
+    const clientUserId = authData.user?.id;
+    if (!clientUserId) {
+      throw new Error("Client registration failed: No user ID was returned from Auth.");
+    }
+
+    // 2. Insert corresponding row into the profiles table
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .insert({
+        id: clientUserId,
+        company_id: userProfile.company_id,
+        role: "client",
+        email: clientEmail,
+        full_name: "B2B Client"
       });
 
-      sendPushAlert("Project Established", `Project ${name} (${uniqueId}) created. Welcome details dispatched to client.`);
-    } catch (e) {
-      console.error("Onboarding dispatch failed:", e);
+    if (profileError) {
+      console.error("Client profile insertion failed:", profileError);
+      throw new Error(`Client profile insertion failed: ${profileError.message}`);
     }
+
+    // 3. Log welcome details in transactional_emails table
+    const emailBody = `Welcome to the ApexOps enterprise portal! Your project has been established.
+
+Unique Project ID: ${uniqueId}
+Login Identity: ${clientEmail}
+
+To sign in, please navigate to the Client Gateway on the Welcome Page and log in using your registered Email Address and your system-generated Unique Project ID.`;
+
+    const { error: emailError } = await supabase.from("transactional_emails").insert({
+      recipient: clientEmail,
+      subject: "Welcome to ApexOps SAP Hub - Client Onboarding Details",
+      body: emailBody,
+    });
+
+    if (emailError) {
+      console.error("Failed to log welcome email:", emailError);
+      throw new Error(`Failed to log welcome email: ${emailError.message}`);
+    }
+
+    sendPushAlert("Project Established", `Project ${name} (${uniqueId}) created. Client account established.`);
 
     return project;
   }, [userProfile]);
