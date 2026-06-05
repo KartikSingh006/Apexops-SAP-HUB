@@ -124,11 +124,71 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactional_emails ENABLE ROW LEVEL SECURITY;
 
 -- STATEMENT
+CREATE OR REPLACE FUNCTION public.sync_profile_to_user_metadata()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE auth.users
+    SET raw_user_meta_data = 
+        COALESCE(raw_user_meta_data, '{}'::jsonb) || 
+        jsonb_build_object('role', NEW.role, 'company_id', NEW.company_id)
+    WHERE id = NEW.id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = auth, public;
+
+-- STATEMENT
+DROP TRIGGER IF EXISTS on_profile_change ON public.profiles;
+CREATE TRIGGER on_profile_change
+AFTER INSERT OR UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_profile_to_user_metadata();
+
+-- STATEMENT
+CREATE OR REPLACE FUNCTION get_user_company_id()
+RETURNS UUID AS $$
+DECLARE
+    c_id UUID;
+BEGIN
+    c_id := ((auth.jwt() -> 'user_metadata' ->> 'company_id')::uuid);
+    IF c_id IS NULL THEN
+        SELECT company_id INTO c_id FROM public.profiles WHERE id = auth.uid();
+    END IF;
+    RETURN c_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- STATEMENT
+CREATE OR REPLACE FUNCTION get_user_role()
+RETURNS TEXT AS $$
+DECLARE
+    u_role TEXT;
+BEGIN
+    u_role := (auth.jwt() -> 'user_metadata' ->> 'role');
+    IF u_role IS NULL THEN
+        SELECT role INTO u_role FROM public.profiles WHERE id = auth.uid();
+    END IF;
+    RETURN u_role;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- STATEMENT
+CREATE OR REPLACE FUNCTION get_user_email()
+RETURNS TEXT AS $$
+DECLARE
+    u_email TEXT;
+BEGIN
+    u_email := (auth.jwt() ->> 'email');
+    IF u_email IS NULL THEN
+        SELECT email INTO u_email FROM public.profiles WHERE id = auth.uid();
+    END IF;
+    RETURN u_email;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- STATEMENT
 DROP POLICY IF EXISTS select_company ON companies;
 CREATE POLICY select_company ON companies
-    FOR SELECT USING (
-        id IN (SELECT company_id FROM profiles WHERE id = auth.uid())
-    );
+    FOR SELECT USING (id = get_user_company_id());
 
 -- STATEMENT
 DROP POLICY IF EXISTS insert_company ON companies;
@@ -138,54 +198,48 @@ CREATE POLICY insert_company ON companies
 -- STATEMENT
 DROP POLICY IF EXISTS update_company ON companies;
 CREATE POLICY update_company ON companies
-    FOR UPDATE USING (
-        id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR UPDATE USING (id = get_user_company_id() AND get_user_role() = 'admin');
 
 -- STATEMENT
 DROP POLICY IF EXISTS select_profile ON profiles;
 CREATE POLICY select_profile ON profiles
     FOR SELECT USING (
-        company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid())
+        id = auth.uid() OR 
+        company_id = ((auth.jwt() -> 'user_metadata' ->> 'company_id')::uuid)
     );
 
 -- STATEMENT
 DROP POLICY IF EXISTS insert_profile ON profiles;
 CREATE POLICY insert_profile ON profiles
-    FOR INSERT WITH CHECK (
-        true
-    );
+    FOR INSERT WITH CHECK (true);
 
 -- STATEMENT
 DROP POLICY IF EXISTS update_profile ON profiles;
 CREATE POLICY update_profile ON profiles
     FOR UPDATE USING (
         id = auth.uid() OR 
-        company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin')
+        (company_id = ((auth.jwt() -> 'user_metadata' ->> 'company_id')::uuid) AND 
+         (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin')
     );
 
 -- STATEMENT
 DROP POLICY IF EXISTS select_projects ON projects;
 CREATE POLICY select_projects ON projects
     FOR SELECT USING (
-        company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+        (company_id = get_user_company_id() AND get_user_role() = 'admin') OR
         id IN (SELECT project_id FROM project_assignments WHERE employee_id = auth.uid()) OR
-        client_email = (SELECT email FROM profiles WHERE id = auth.uid())
+        client_email = get_user_email()
     );
 
 -- STATEMENT
 DROP POLICY IF EXISTS insert_projects ON projects;
 CREATE POLICY insert_projects ON projects
-    FOR INSERT WITH CHECK (
-        company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR INSERT WITH CHECK (company_id = get_user_company_id() AND get_user_role() = 'admin');
 
 -- STATEMENT
 DROP POLICY IF EXISTS update_projects ON projects;
 CREATE POLICY update_projects ON projects
-    FOR UPDATE USING (
-        company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR UPDATE USING (company_id = get_user_company_id() AND get_user_role() = 'admin');
 
 -- STATEMENT
 DROP POLICY IF EXISTS select_assignments ON project_assignments;
@@ -193,9 +247,9 @@ CREATE POLICY select_assignments ON project_assignments
     FOR SELECT USING (
         project_id IN (
             SELECT id FROM projects WHERE 
-                company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+                (company_id = get_user_company_id() AND get_user_role() = 'admin') OR
                 id IN (SELECT project_id FROM project_assignments WHERE employee_id = auth.uid()) OR
-                client_email = (SELECT email FROM profiles WHERE id = auth.uid())
+                client_email = get_user_email()
         )
     );
 
@@ -203,14 +257,14 @@ CREATE POLICY select_assignments ON project_assignments
 DROP POLICY IF EXISTS insert_assignments ON project_assignments;
 CREATE POLICY insert_assignments ON project_assignments
     FOR INSERT WITH CHECK (
-        project_id IN (SELECT id FROM projects WHERE company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+        project_id IN (SELECT id FROM projects WHERE company_id = get_user_company_id() AND get_user_role() = 'admin')
     );
 
 -- STATEMENT
 DROP POLICY IF EXISTS delete_assignments ON project_assignments;
 CREATE POLICY delete_assignments ON project_assignments
     FOR DELETE USING (
-        project_id IN (SELECT id FROM projects WHERE company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+        project_id IN (SELECT id FROM projects WHERE company_id = get_user_company_id() AND get_user_role() = 'admin')
     );
 
 -- STATEMENT
@@ -219,9 +273,9 @@ CREATE POLICY select_feature_flags ON feature_flags
     FOR SELECT USING (
         project_id IN (
             SELECT id FROM projects WHERE 
-                company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+                (company_id = get_user_company_id() AND get_user_role() = 'admin') OR
                 id IN (SELECT project_id FROM project_assignments WHERE employee_id = auth.uid()) OR
-                client_email = (SELECT email FROM profiles WHERE id = auth.uid())
+                client_email = get_user_email()
         )
     );
 
@@ -229,7 +283,7 @@ CREATE POLICY select_feature_flags ON feature_flags
 DROP POLICY IF EXISTS write_feature_flags ON feature_flags;
 CREATE POLICY write_feature_flags ON feature_flags
     FOR ALL USING (
-        project_id IN (SELECT id FROM projects WHERE company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+        project_id IN (SELECT id FROM projects WHERE company_id = get_user_company_id() AND get_user_role() = 'admin')
     );
 
 -- STATEMENT
@@ -238,9 +292,9 @@ CREATE POLICY select_tickets ON help_tickets
     FOR SELECT USING (
         project_id IN (
             SELECT id FROM projects WHERE 
-                company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+                (company_id = get_user_company_id() AND get_user_role() = 'admin') OR
                 id IN (SELECT project_id FROM project_assignments WHERE employee_id = auth.uid()) OR
-                client_email = (SELECT email FROM profiles WHERE id = auth.uid())
+                client_email = get_user_email()
         )
     );
 
@@ -249,7 +303,7 @@ DROP POLICY IF EXISTS insert_tickets ON help_tickets;
 CREATE POLICY insert_tickets ON help_tickets
     FOR INSERT WITH CHECK (
         client_id = auth.uid() OR
-        project_id IN (SELECT id FROM projects WHERE company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+        project_id IN (SELECT id FROM projects WHERE company_id = get_user_company_id() AND get_user_role() = 'admin')
     );
 
 -- STATEMENT
@@ -258,7 +312,7 @@ CREATE POLICY update_tickets ON help_tickets
     FOR UPDATE USING (
         project_id IN (
             SELECT id FROM projects WHERE 
-                company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+                (company_id = get_user_company_id() AND get_user_role() = 'admin') OR
                 id IN (SELECT project_id FROM project_assignments WHERE employee_id = auth.uid())
         )
     );
@@ -273,6 +327,4 @@ CREATE POLICY manage_notifications ON notifications
 -- STATEMENT
 DROP POLICY IF EXISTS select_emails ON transactional_emails;
 CREATE POLICY select_emails ON transactional_emails
-    FOR SELECT USING (
-        EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR SELECT USING (get_user_role() = 'admin');

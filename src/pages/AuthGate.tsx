@@ -65,10 +65,19 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
         throw new Error('Corporate Email and Master Password are required.');
       }
 
-      // 1. Sign up user via Supabase Auth
+      // Generate company UUID client-side to associate user metadata on signup
+      const companyId = crypto.randomUUID();
+
+      // 1. Sign up user via Supabase Auth with metadata preloaded
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
         password: password.trim(),
+        options: {
+          data: {
+            role: 'admin',
+            company_id: companyId,
+          },
+        },
       });
 
       if (signUpError) {
@@ -80,26 +89,24 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
         throw new Error('Registration failed. No user was returned from authentication.');
       }
 
-      // 2. Programmatically insert a new row into the companies table
-      console.log('Admin Register: Inserting company name:', companyName.trim());
-      const { data: companyData, error: companyError } = await supabase
+      // 2. Programmatically insert a new row into the companies table using the generated companyId
+      console.log('Admin Register: Inserting company name:', companyName.trim(), 'id:', companyId);
+      const { error: companyError } = await supabase
         .from('companies')
-        .insert({ name: companyName.trim() })
-        .select()
-        .single();
+        .insert({ id: companyId, name: companyName.trim() });
 
       if (companyError) {
         console.error('Admin Register: Company insertion failed:', companyError);
         throw new Error(`Failed to initialize company: ${companyError.message}`);
       }
 
-      console.log('Admin Register: Inserting profile for user:', user.id, 'company:', companyData.id);
+      console.log('Admin Register: Inserting profile for user:', user.id, 'company:', companyId);
       // 3. Subsequently insert a row into the profiles table mapping user's UUID to the role 'admin'
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
           id: user.id,
-          company_id: companyData.id,
+          company_id: companyId,
           role: 'admin',
           email: user.email || email.trim(),
           full_name: 'Company Admin',
