@@ -131,6 +131,18 @@ CREATE POLICY select_company ON companies
     );
 
 -- STATEMENT
+DROP POLICY IF EXISTS insert_company ON companies;
+CREATE POLICY insert_company ON companies
+    FOR INSERT WITH CHECK (true);
+
+-- STATEMENT
+DROP POLICY IF EXISTS update_company ON companies;
+CREATE POLICY update_company ON companies
+    FOR UPDATE USING (
+        id IN (SELECT company_id FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    );
+
+-- STATEMENT
 DROP POLICY IF EXISTS select_profile ON profiles;
 CREATE POLICY select_profile ON profiles
     FOR SELECT USING (

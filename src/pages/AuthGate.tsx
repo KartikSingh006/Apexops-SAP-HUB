@@ -35,6 +35,8 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
   const [successMessage, setSuccessMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [resetMode, setResetMode] = useState(false);
+  const [companyName, setCompanyName] = useState('');
+  const [adminRegisterMode, setAdminRegisterMode] = useState(false);
 
   // Reset fields on switching gateway
   const selectGateway = (gate: LoginGateway | null) => {
@@ -42,9 +44,80 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
     setEmail('');
     setPassword('');
     setProjectId('');
+    setCompanyName('');
+    setAdminRegisterMode(false);
     setError('');
     setSuccessMessage('');
     setResetMode(false);
+  };
+
+  const handleAdminRegister = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+    setLoading(true);
+
+    try {
+      if (!companyName.trim()) {
+        throw new Error('Please enter your Company / Enterprise Name.');
+      }
+      if (!email.trim() || !password.trim()) {
+        throw new Error('Corporate Email and Master Password are required.');
+      }
+
+      // 1. Sign up user via Supabase Auth
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password.trim(),
+      });
+
+      if (signUpError) {
+        throw signUpError;
+      }
+
+      const user = signUpData.user;
+      if (!user) {
+        throw new Error('Registration failed. No user was returned from authentication.');
+      }
+
+      // 2. Programmatically insert a new row into the companies table
+      const { data: companyData, error: companyError } = await supabase
+        .from('companies')
+        .insert({ name: companyName.trim() })
+        .select()
+        .single();
+
+      if (companyError) {
+        throw new Error(`Failed to initialize company: ${companyError.message}`);
+      }
+
+      // 3. Subsequently insert a row into the profiles table mapping user's UUID to the role 'admin'
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          company_id: companyData.id,
+          role: 'admin',
+          email: user.email || email.trim(),
+          full_name: 'Company Admin',
+        });
+
+      if (profileError) {
+        throw new Error(`Failed to create admin profile: ${profileError.message}`);
+      }
+
+      // Set success message
+      setSuccessMessage(
+        'Enterprise registered successfully! If email verification is enabled, check your inbox; otherwise, you can now log in.'
+      );
+      // Switch back to login mode and clear registration fields
+      setAdminRegisterMode(false);
+      setCompanyName('');
+    } catch (err: any) {
+      setError(err?.message ?? 'An unexpected error occurred during enterprise registration.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -256,11 +329,32 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
             )}
 
             <h2 className="text-xl font-bold text-slate-800 mb-5">
-              {resetMode ? 'Reset Credentials' : `Sign in as ${gateway.toUpperCase()}`}
+              {resetMode 
+                ? 'Reset Credentials' 
+                : (gateway === 'admin' && adminRegisterMode 
+                  ? 'Register your Enterprise' 
+                  : `Sign in as ${gateway.toUpperCase()}`)}
             </h2>
 
             {/* Form */}
-            <form onSubmit={resetMode ? handleResetPassword : handleLogin} className="space-y-4">
+            <form 
+              onSubmit={resetMode ? handleResetPassword : (gateway === 'admin' && adminRegisterMode ? handleAdminRegister : handleLogin)} 
+              className="space-y-4"
+            >
+              {gateway === 'admin' && adminRegisterMode && !resetMode && (
+                <div className="relative">
+                  <Briefcase className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Enter Company / Enterprise Name"
+                    required
+                    className="input-field w-full pl-11 pr-4 py-2.5 rounded-xl text-sm border border-slate-200 focus:border-sap-500 outline-none"
+                  />
+                </div>
+              )}
+
               {gateway === 'client' && !resetMode && (
                 <div className="relative">
                   <Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -281,7 +375,11 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={gateway === 'client' ? 'Enter registered Email Address' : 'Enter Corporate Email'}
+                  placeholder={
+                    gateway === 'client' 
+                      ? 'Enter registered Email Address' 
+                      : (gateway === 'admin' && adminRegisterMode ? 'Enter Corporate Admin Email' : 'Enter Corporate Email')
+                  }
                   required
                   className="input-field w-full pl-11 pr-4 py-2.5 rounded-xl text-sm border border-slate-200 focus:border-sap-500 outline-none"
                 />
@@ -294,7 +392,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter Password"
+                    placeholder={gateway === 'admin' && adminRegisterMode ? 'Choose Master Password' : 'Enter Password'}
                     required
                     className="input-field w-full pl-11 pr-10 py-2.5 rounded-xl text-sm border border-slate-200 focus:border-sap-500 outline-none"
                   />
@@ -317,30 +415,55 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Authenticating Gateway...
+                    {gateway === 'admin' && adminRegisterMode ? 'Registering Enterprise...' : 'Authenticating Gateway...'}
                   </>
                 ) : (
                   <>
-                    {resetMode ? 'Send Reset Request' : 'Access Enterprise Portal'}
+                    {resetMode 
+                      ? 'Send Reset Request' 
+                      : (gateway === 'admin' && adminRegisterMode 
+                        ? 'Register & Initialize Enterprise' 
+                        : 'Access Enterprise Portal')}
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
               </button>
             </form>
 
+            {/* Admin Register toggle */}
+            {gateway === 'admin' && !resetMode && (
+              <div className="mt-4 text-center border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminRegisterMode(!adminRegisterMode);
+                    setError('');
+                    setSuccessMessage('');
+                  }}
+                  className="text-xs font-semibold text-sap-600 hover:underline"
+                >
+                  {adminRegisterMode 
+                    ? 'Already have an Enterprise? Sign in' 
+                    : 'New Company? Register your Enterprise'}
+                </button>
+              </div>
+            )}
+
             {/* Toggle Forgot Password / Reset view */}
-            <div className="mt-5 text-center">
-              <button
-                onClick={() => {
-                  setResetMode(!resetMode);
-                  setError('');
-                  setSuccessMessage('');
-                }}
-                className="text-xs font-semibold text-sap-600 hover:underline"
-              >
-                {resetMode ? 'Return to Portal Login' : 'Forgot Password or Onboarding ID?'}
-              </button>
-            </div>
+            {!adminRegisterMode && (
+              <div className="mt-5 text-center">
+                <button
+                  onClick={() => {
+                    setResetMode(!resetMode);
+                    setError('');
+                    setSuccessMessage('');
+                  }}
+                  className="text-xs font-semibold text-sap-600 hover:underline"
+                >
+                  {resetMode ? 'Return to Portal Login' : 'Forgot Password or Onboarding ID?'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
