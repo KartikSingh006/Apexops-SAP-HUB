@@ -1,0 +1,268 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #ffffff;
+    color: #1e293b;
+    overflow-x: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f8fafc;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  ::selection {
+    background-color: rgba(37, 99, 235, 0.2);
+    color: #0f172a;
+  }
+
+  input, textarea, select {
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background: rgba(248, 250, 252, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .glass-panel-strong {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  .neon-border {
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    box-shadow: 0 2px 10px rgba(34, 197, 94, 0.05);
+  }
+
+  .sap-border {
+    border: 1px solid rgba(37, 99, 235, 0.3);
+    box-shadow: 0 2px 10px rgba(37, 99, 235, 0.05);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #0284c7 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .gradient-text-neon {
+    background: linear-gradient(135deg, #16a34a 0%, #0891b2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .metric-card {
+    @apply glass-panel rounded-2xl p-5 relative overflow-hidden transition-all duration-300 shadow-sm;
+  }
+
+  .metric-card:hover {
+    @apply border-sap-500/40;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
+  }
+
+  .metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #2563eb, transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .metric-card:hover::before {
+    opacity: 1;
+  }
+
+  .btn-primary {
+    @apply px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 relative overflow-hidden text-white;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+
+  .btn-secondary {
+    @apply px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 text-slate-700;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+  }
+
+  .btn-secondary:hover {
+    background: #e2e8f0;
+    border-color: #cbd5e1;
+    color: #0f172a;
+  }
+
+  .btn-neon {
+    @apply px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 text-white;
+    background: linear-gradient(135deg, #16a34a 0%, #059669 100%);
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.2);
+  }
+
+  .btn-neon:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(22, 163, 74, 0.3);
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl text-sm transition-all duration-300 outline-none;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+  }
+
+  .input-field:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  }
+
+  .input-field::placeholder {
+    color: #94a3b8;
+  }
+
+  .data-grid {
+    @apply w-full text-sm;
+  }
+
+  .data-grid th {
+    @apply px-4 py-3 text-left font-semibold text-slate-600 uppercase text-xs tracking-wider;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .data-grid td {
+    @apply px-4 py-3 text-slate-800;
+    border-bottom: 1px solid #f1f5f9;
+  }
+
+  .data-grid tbody tr {
+    @apply transition-colors duration-200;
+  }
+
+  .data-grid tbody tr:hover {
+    background: rgba(37, 99, 235, 0.04);
+  }
+
+  .status-badge {
+    @apply px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1.5;
+  }
+
+  .status-badge-success {
+    @apply status-badge;
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+  }
+
+  .status-badge-warning {
+    @apply status-badge;
+    background: #fff7ed;
+    color: #ea580c;
+    border: 1px solid #fed7aa;
+  }
+
+  .status-badge-danger {
+    @apply status-badge;
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+  }
+
+  .status-badge-info {
+    @apply status-badge;
+    background: #f0f9ff;
+    color: #0284c7;
+    border: 1px solid #bae6fd;
+  }
+
+  .scanner-overlay {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .scanner-overlay::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, #16a34a, transparent);
+    animation: scanLine 3s linear infinite;
+    box-shadow: 0 0 10px #16a34a, 0 0 20px rgba(22, 163, 74, 0.4);
+  }
+
+  .terminal-text {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: #0f172a;
+  }
+
+  .page-container {
+    @apply p-4 md:p-6 space-y-6 animate-fade-in;
+  }
+
+  .section-header {
+    @apply flex items-center justify-between flex-wrap gap-4 mb-6;
+  }
+
+  .card-grid {
+    @apply grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4;
+  }
+
+  .shimmer-bg {
+    background: linear-gradient(90deg, transparent, rgba(0,0,0,0.02), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
