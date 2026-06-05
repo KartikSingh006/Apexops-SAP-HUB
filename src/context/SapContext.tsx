@@ -1415,10 +1415,15 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
         if (tix) setTickets(tix);
 
         // Fetch assignments
-        const { data: assign } = await supabase
+        let { data: assign } = await supabase
           .from("project_assignments")
           .select("*");
-        if (assign) setAssignments(assign);
+        if (assign) {
+          if (userProfile.role === 'admin') {
+            assign = assign.filter(a => a.employee_id !== userProfile.id);
+          }
+          setAssignments(assign);
+        }
 
         // Admins can fetch all profiles (employees) and transactional emails
         if (userProfile.role === "admin") {
@@ -1469,8 +1474,19 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
   // Handle auth session state loading
   useEffect(() => {
     loadLiveDbData();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      loadLiveDbData();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        loadLiveDbData();
+      } else {
+        // Clear all states on signout to scope context cleanly
+        setUserProfile(null);
+        setProjects([]);
+        setEmployees([]);
+        setAssignments([]);
+        setTickets([]);
+        setEmails([]);
+        setNotifications([]);
+      }
     });
     return () => subscription.unsubscribe();
   }, [loadLiveDbData]);
@@ -1598,8 +1614,25 @@ To sign in, please navigate to the Client Gateway on the Welcome Page and log in
       throw new Error("Only Administrators can assign employees to workspaces.");
     }
 
-    // 1. Perform assignment limit check locally for direct UX response
-    const activeAssignments = assignments.filter(a => a.employee_id === employeeId);
+    // Resolve the actual employee UUID from the profiles table to bind the assignment correctly
+    let targetUid = employeeId;
+    const { data: lookupProfile, error: lookupErr } = await supabase
+      .from("profiles")
+      .select("id")
+      .or(`id.eq.${employeeId},email.eq.${employeeId}`)
+      .maybeSingle();
+
+    if (lookupErr) {
+      throw new Error(`Failed to verify employee profile: ${lookupErr.message}`);
+    }
+    if (lookupProfile) {
+      targetUid = lookupProfile.id;
+    } else {
+      throw new Error(`Employee profile mapping for ${employeeId} not found.`);
+    }
+
+    // 1. Perform assignment limit check locally for direct UX response using targetUid
+    const activeAssignments = assignments.filter(a => a.employee_id === targetUid);
     const activeProjectsCount = activeAssignments.filter(a => {
       const proj = projects.find(p => p.id === a.project_id);
       return proj && proj.status === "active";
@@ -1614,7 +1647,7 @@ To sign in, please navigate to the Client Gateway on the Welcome Page and log in
       .from("project_assignments")
       .insert({
         project_id: projectId,
-        employee_id: employeeId
+        employee_id: targetUid
       });
 
     if (dbError) {
@@ -1637,7 +1670,7 @@ Please login to your ApexOps corporate workspace to review project requirements 
 
       // Insert notification
       await supabase.from("notifications").insert({
-        user_id: employeeId,
+        user_id: targetUid,
         title: "New Project Assignment",
         message: `You have been allocated to project: ${assignedProj?.name || "Active Module"}.`
       });
