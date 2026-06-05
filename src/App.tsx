@@ -10,10 +10,9 @@ import WarehouseAudit from '@/pages/WarehouseAudit';
 import MaintenanceHub from '@/pages/MaintenanceHub';
 import type { Session } from '@supabase/supabase-js';
 
-function AppContent({ currentPage, handleNavigate, renderPage }: {
+function AppContent({ currentPage, handleNavigate }: {
   currentPage: string;
   handleNavigate: (page: string) => void;
-  renderPage: () => React.ReactNode;
 }) {
   const { userProfile, projects, isJouleEnabledForProject } = useSap();
 
@@ -28,6 +27,30 @@ function AppContent({ currentPage, handleNavigate, renderPage }: {
     
     return isJouleEnabledForProject(clientProj.id);
   }, [userProfile, projects, isJouleEnabledForProject]);
+
+  const renderPage = () => {
+    if (!userProfile) {
+      return (
+        <div className="flex items-center justify-center min-h-[60vh] bg-slate-50">
+          <p className="text-slate-500 font-semibold">Loading user workspace...</p>
+        </div>
+      );
+    }
+    
+    // Security restriction: client role is blocked from non-dashboard pages
+    const activePage = (userProfile.role === 'client' && currentPage !== 'dashboard') ? 'dashboard' : currentPage;
+
+    switch (activePage) {
+      case 'dashboard':
+        return <Dashboard />;
+      case 'warehouse':
+        return <WarehouseAudit />;
+      case 'maintenance':
+        return <MaintenanceHub />;
+      default:
+        return <Dashboard />;
+    }
+  };
 
   return (
     <>
@@ -66,19 +89,6 @@ function App() {
     setCurrentPage(page);
   }, []);
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard />;
-      case 'warehouse':
-        return <WarehouseAudit />;
-      case 'maintenance':
-        return <MaintenanceHub />;
-      default:
-        return <Dashboard />;
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -111,7 +121,6 @@ function App() {
       <AppContent
         currentPage={currentPage}
         handleNavigate={handleNavigate}
-        renderPage={renderPage}
       />
     </SapProvider>
   );

@@ -139,13 +139,18 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
   }, [workOrders]);
 
   const navItems: NavItem[] = useMemo(() => {
-    const items: NavItem[] = [
+    if (!userProfile) return [];
+    if (userProfile.role === 'client') {
+      return [
+        { id: 'dashboard', label: 'Client Portal', icon: LayoutDashboard, badge: null }
+      ];
+    }
+    return [
       { id: 'dashboard', label: 'Analytics Hub', icon: LayoutDashboard, badge: null },
       { id: 'warehouse', label: 'Warehouse Audit', icon: Warehouse, badge: lowStockCount },
       { id: 'maintenance', label: 'Maintenance Hub', icon: Wrench, badge: openWorkOrdersCount },
     ];
-    return items;
-  }, [lowStockCount, openWorkOrdersCount]);
+  }, [userProfile, lowStockCount, openWorkOrdersCount]);
 
   const currentPageLabel = useMemo(() => {
     const found = navItems.find((item) => item.id === currentPage);

@@ -364,7 +364,15 @@ const Dashboard: React.FC = () => {
   }, [clientProj, assignments, employees]);
 
   /* ─────────────────── RENDER ─────────────────── */
-  if (userProfile?.role === 'client') {
+  if (!userProfile) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh] bg-slate-50">
+        <p className="text-slate-500 font-semibold">Loading operational metrics...</p>
+      </div>
+    );
+  }
+
+  if (userProfile.role === 'client') {
     return (
       <div className="page-container max-w-7xl mx-auto space-y-6">
         {/* Page Header */}
