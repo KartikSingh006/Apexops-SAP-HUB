@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "apex-joule": {
+      "verify_jwt": false
+    }
+  }
+}

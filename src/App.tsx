@@ -4,6 +4,7 @@ import { SapProvider } from '@/context/SapContext';
 import AuthGate from '@/pages/AuthGate';
 import Layout from '@/components/Layout';
 import ODataStream from '@/components/ODataStream';
+import ApexJoule from '@/components/ApexJoule';
 import Dashboard from '@/pages/Dashboard';
 import WarehouseAudit from '@/pages/WarehouseAudit';
 import MaintenanceHub from '@/pages/MaintenanceHub';
@@ -80,6 +81,8 @@ function App() {
         {renderPage()}
       </Layout>
       <ODataStream />
+      {/* ApexJoule floating AI assistant — rendered at root level for correct z-index & drag scope */}
+      <ApexJoule onNavigate={handleNavigate} />
     </SapProvider>
   );
 }
