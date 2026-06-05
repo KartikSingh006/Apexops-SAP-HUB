@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   ScanBarcode,
   Plus,
@@ -37,6 +38,8 @@ const WarehouseAudit: React.FC = () => {
   const [scannedMaterial, setScannedMaterial] = useState<SAPMaterial | null>(null);
   const [adjustmentQuantity, setAdjustmentQuantity] = useState<number>(0);
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string>('');
   const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>([]);
   const [filterPlant, setFilterPlant] = useState<string>('');
   const [sortField, setSortField] = useState<SortField>('materialId');
@@ -45,22 +48,93 @@ const WarehouseAudit: React.FC = () => {
   const [showSuccess, setShowSuccess] = useState<boolean>(false);
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(true);
 
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+
   // Extract unique plants for filter dropdown
   const uniquePlants = Array.from(new Set(materials.map((m) => m.plantId))).sort();
 
-  // Handle barcode scan simulation
-  const handleScan = useCallback(() => {
-    if (isScanning || materials.length === 0) return;
+  // Start hardware scanner
+  const startCameraScanner = useCallback(() => {
+    setIsCameraActive(true);
     setIsScanning(true);
-
+    setCameraError('');
+    
     setTimeout(() => {
-      const randomIndex = Math.floor(Math.random() * materials.length);
-      const material = materials[randomIndex];
-      setScannedMaterial(material);
-      setAdjustmentQuantity(material.stockQuantity);
+      try {
+        const html5QrcodeScanner = new Html5QrcodeScanner(
+          "camera-reader-viewport",
+          { 
+            fps: 10, 
+            qrbox: { width: 220, height: 150 }, 
+            rememberLastUsedCamera: true,
+            supportedScanTypes: [] // Auto detect all types including barcodes
+          },
+          /* verbose= */ false
+        );
+
+        html5QrcodeScanner.render(
+          (decodedText) => {
+            // Find material
+            const matched = materials.find(
+              m => m.materialId.toLowerCase() === decodedText.trim().toLowerCase()
+            );
+
+            if (matched) {
+              setScannedMaterial(matched);
+              setAdjustmentQuantity(matched.stockQuantity);
+              
+              // Clear scanner
+              html5QrcodeScanner.clear().then(() => {
+                setIsCameraActive(false);
+                setIsScanning(false);
+                scannerRef.current = null;
+              }).catch(err => console.error("Error clearing scanner:", err));
+            } else {
+              // Highlight code, but allow manual mapping/selection
+              alert(`Scanned item barcode: "${decodedText}". We could not find a direct material ID match in your SAP index. Please select a material from the table below to reconcile.`);
+            }
+          },
+          (error) => {
+            // Silent error on scanning failures (e.g. out of focus frames)
+          }
+        );
+
+        scannerRef.current = html5QrcodeScanner;
+      } catch (err: any) {
+        console.error("Camera access failed:", err);
+        setCameraError("Active browser camera permission is required to perform physical barcode audits.");
+        setIsCameraActive(false);
+        setIsScanning(false);
+      }
+    }, 150);
+  }, [materials]);
+
+  // Stop hardware scanner
+  const stopCameraScanner = useCallback(() => {
+    if (scannerRef.current) {
+      scannerRef.current.clear().then(() => {
+        setIsCameraActive(false);
+        setIsScanning(false);
+        scannerRef.current = null;
+      }).catch(err => {
+        console.error("Failed to stop scanner:", err);
+        setIsCameraActive(false);
+        setIsScanning(false);
+      });
+    } else {
+      setIsCameraActive(false);
       setIsScanning(false);
-    }, 800);
-  }, [isScanning, materials]);
+    }
+  }, []);
+
+  // Cleanup scanner on unmount
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(err => console.error("Scanner unmount clear error:", err));
+      }
+    };
+  }, []);
 
   // Stock adjustment handlers
   const incrementQuantity = useCallback(() => {
@@ -189,37 +263,43 @@ const WarehouseAudit: React.FC = () => {
         <div className="space-y-6">
           {/* Scan Barcode Section */}
           <div className="glass-panel bg-white border border-slate-200 shadow-sm rounded-2xl p-6 flex flex-col items-center text-center relative overflow-hidden">
+            {/* Camera Error Alert */}
+            {cameraError && (
+              <div className="w-full flex items-start gap-2.5 p-3 mb-4 rounded-xl bg-red-50 border border-red-200 text-left">
+                <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                <p className="text-2xs text-red-600 font-medium">{cameraError}</p>
+              </div>
+            )}
+
             {/* Scanner Viewport */}
             <div
-              className={`relative w-48 h-48 rounded-2xl border-2 border-slate-200 mb-6 flex items-center justify-center ${
-                isScanning ? 'scanner-overlay' : ''
+              className={`relative w-full max-w-sm h-64 rounded-2xl border-2 border-slate-200 mb-6 flex items-center justify-center overflow-hidden ${
+                isScanning ? 'border-emerald-500' : ''
               }`}
               style={{
                 background: '#f8fafc',
               }}
             >
               {/* Corner brackets */}
-              <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-500 rounded-tl-md" />
-              <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-500 rounded-tr-md" />
-              <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-500 rounded-bl-md" />
-              <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-500 rounded-br-md" />
+              <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-500 rounded-tl-md z-10" />
+              <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-500 rounded-tr-md z-10" />
+              <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-500 rounded-bl-md z-10" />
+              <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-500 rounded-br-md z-10" />
 
-              {isScanning ? (
-                <div className="flex flex-col items-center gap-3">
-                  <RefreshCw className="w-10 h-10 text-emerald-600 animate-spin" />
-                  <span className="text-xs text-emerald-600 font-mono tracking-widest uppercase">
-                    Scanning...
-                  </span>
-                </div>
+              {isCameraActive ? (
+                <div id="camera-reader-viewport" className="w-full h-full bg-black z-0"></div>
               ) : (
-                <ScanBarcode
-                  className="w-16 h-16 text-emerald-600 animate-pulse"
-                  strokeWidth={1.5}
-                />
+                <div className="flex flex-col items-center gap-3">
+                  <ScanBarcode
+                    className="w-16 h-16 text-emerald-600 animate-pulse"
+                    strokeWidth={1.5}
+                  />
+                  <span className="text-xs text-slate-400 font-semibold font-mono">CAMERA FEED INACTIVE</span>
+                </div>
               )}
 
               {/* Scan line animation when scanning */}
-              {isScanning && (
+              {isScanning && !isCameraActive && (
                 <div
                   className="absolute left-2 right-2 h-0.5 bg-emerald-500 animate-scan-line"
                   style={{
@@ -230,20 +310,30 @@ const WarehouseAudit: React.FC = () => {
             </div>
 
             <h2 className="text-lg font-semibold text-slate-900 mb-2">
-              {isScanning ? 'Scanning Barcode...' : 'Ready to Scan'}
+              {isCameraActive ? 'Barcode Camera Enabled' : 'Ready to Scan'}
             </h2>
             <p className="text-sm text-slate-500 mb-5 max-w-xs">
-              Position barcode within the scanning viewport and tap to begin material identification.
+              Position physical material barcode within the active camera scanning frame.
             </p>
 
-            <button
-              onClick={handleScan}
-              disabled={isScanning}
-              className="btn-neon flex items-center gap-2 px-8 py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <ScanBarcode className="w-5 h-5" />
-              {isScanning ? 'Scanning...' : 'Scan Barcode'}
-            </button>
+            <div className="flex items-center gap-3">
+              {isCameraActive ? (
+                <button
+                  onClick={stopCameraScanner}
+                  className="px-6 py-2.5 bg-red-100 hover:bg-red-200 border border-red-200 text-red-700 text-xs font-bold rounded-xl transition-colors"
+                >
+                  Deactivate Camera
+                </button>
+              ) : (
+                <button
+                  onClick={startCameraScanner}
+                  className="btn-neon flex items-center gap-2 px-8 py-3 text-base"
+                >
+                  <ScanBarcode className="w-5 h-5" />
+                  Activate Scanner Camera
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Scanned Material Detail Card */}

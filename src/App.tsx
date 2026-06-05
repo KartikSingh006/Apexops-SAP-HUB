@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { SapProvider } from '@/context/SapContext';
+import { SapProvider, useSap } from '@/context/SapContext';
 import AuthGate from '@/pages/AuthGate';
 import Layout from '@/components/Layout';
 import ODataStream from '@/components/ODataStream';
@@ -9,6 +9,37 @@ import Dashboard from '@/pages/Dashboard';
 import WarehouseAudit from '@/pages/WarehouseAudit';
 import MaintenanceHub from '@/pages/MaintenanceHub';
 import type { Session } from '@supabase/supabase-js';
+
+function AppContent({ currentPage, handleNavigate, renderPage }: {
+  currentPage: string;
+  handleNavigate: (page: string) => void;
+  renderPage: () => React.ReactNode;
+}) {
+  const { userProfile, projects, isJouleEnabledForProject } = useSap();
+
+  // Check if ApexJoule should be visible
+  const isJouleVisible = useMemo(() => {
+    if (!userProfile) return false;
+    if (userProfile.role !== 'client') return true; // Always visible for admin/employees
+    
+    // For clients, find their project and check feature flags
+    const clientProj = projects.find(p => p.client_email === userProfile.email);
+    if (!clientProj) return false;
+    
+    return isJouleEnabledForProject(clientProj.id);
+  }, [userProfile, projects, isJouleEnabledForProject]);
+
+  return (
+    <>
+      <Layout currentPage={currentPage} onNavigate={handleNavigate}>
+        {renderPage()}
+      </Layout>
+      <ODataStream />
+      {/* Conditionally render ApexJoule based on admin custom add-on toggle for clients */}
+      {isJouleVisible && <ApexJoule onNavigate={handleNavigate} />}
+    </>
+  );
+}
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -77,12 +108,11 @@ function App() {
 
   return (
     <SapProvider>
-      <Layout currentPage={currentPage} onNavigate={handleNavigate}>
-        {renderPage()}
-      </Layout>
-      <ODataStream />
-      {/* ApexJoule floating AI assistant — rendered at root level for correct z-index & drag scope */}
-      <ApexJoule onNavigate={handleNavigate} />
+      <AppContent
+        currentPage={currentPage}
+        handleNavigate={handleNavigate}
+        renderPage={renderPage}
+      />
     </SapProvider>
   );
 }

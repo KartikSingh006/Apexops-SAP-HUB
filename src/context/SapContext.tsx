@@ -4,8 +4,10 @@ import React, {
   useCallback,
   useMemo,
   useContext,
+  useEffect,
   type ReactNode,
 } from "react";
+import { supabase } from "@/lib/supabase";
 
 /* ================================================================
    1. TypeScript Interfaces
@@ -109,8 +111,69 @@ export interface SearchResults {
   salesOrders: SalesOrder[];
 }
 
+// Multi-tenant ERP Types
+export interface Company {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface Profile {
+  id: string;
+  company_id: string;
+  role: "admin" | "employee" | "client";
+  email: string;
+  full_name: string | null;
+  created_at: string;
+}
+
+export interface Project {
+  id: string;
+  company_id: string;
+  name: string;
+  unique_project_id: string;
+  status: "active" | "completed";
+  client_email: string;
+  created_at: string;
+}
+
+export interface ProjectAssignment {
+  id: string;
+  project_id: string;
+  employee_id: string;
+  assigned_at: string;
+}
+
+export interface HelpTicket {
+  id: string;
+  project_id: string;
+  client_id: string;
+  subject: string;
+  description: string;
+  status: "open" | "in_progress" | "resolved";
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
+
+export interface TransactionalEmail {
+  id: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  sent_at: string;
+}
+
 /** Context value shape */
 export interface SapContextType {
+  // SAP Mock States
   materials: SAPMaterial[];
   workOrders: WorkOrder[];
   salesOrders: SalesOrder[];
@@ -119,6 +182,18 @@ export interface SapContextType {
   odataDebuggerEnabled: boolean;
   metrics: SapMetrics;
 
+  // Live Multi-tenant DB States
+  userProfile: Profile | null;
+  projects: Project[];
+  employees: Profile[];
+  assignments: ProjectAssignment[];
+  tickets: HelpTicket[];
+  emails: TransactionalEmail[];
+  notifications: Notification[];
+  companyName: string;
+  dbLoading: boolean;
+
+  // SAP Actions
   updateStock: (materialId: string, newQuantity: number) => void;
   createWorkOrder: (fields: Partial<WorkOrder>) => void;
   createSalesOrder: (fields: Partial<SalesOrder>) => void;
@@ -133,6 +208,19 @@ export interface SapContextType {
     details: Record<string, unknown>,
   ) => void;
   searchAll: (query: string) => SearchResults;
+
+  // Multi-tenant ERP Actions
+  createProject: (name: string, clientEmail: string) => Promise<Project>;
+  renameProject: (id: string, name: string) => Promise<void>;
+  assignEmployee: (projectId: string, employeeId: string) => Promise<void>;
+  removeEmployee: (projectId: string, employeeId: string) => Promise<void>;
+  toggleApexJoule: (projectId: string, enabled: boolean) => Promise<void>;
+  createHelpTicket: (projectId: string, subject: string, description: string) => Promise<void>;
+  updateTicketStatus: (ticketId: string, status: HelpTicket["status"]) => Promise<void>;
+  markNotificationRead: (id: string) => Promise<void>;
+  loadLiveDbData: () => Promise<void>;
+  isJouleEnabledForProject: (projectId: string) => boolean;
+  featureFlags: Record<string, boolean>;
 }
 
 /* ================================================================
@@ -156,23 +244,8 @@ function d(iso: string): Date {
 }
 
 /* ================================================================
-   3. Pre-populated Mock Data
+   3. Pre-populated SAP Mock Data
    ================================================================ */
-
-const FUNCTIONAL_CODES_POOL: string[] = [
-  "HYD-ERR-01",
-  "HYD-ERR-02",
-  "ELEC-FAIL-01",
-  "ELEC-FAIL-02",
-  "ELEC-FAIL-03",
-  "ELEC-FAIL-04",
-  "MECH-WEAR-01",
-  "MECH-WEAR-02",
-  "THERM-OVR-01",
-  "THERM-OVR-02",
-  "PNEU-LEAK-01",
-  "CTRL-SYS-01",
-];
 
 const INITIAL_MATERIALS: SAPMaterial[] = [
   {
@@ -198,321 +271,313 @@ const INITIAL_MATERIALS: SAPMaterial[] = [
     storageLocation: "SLoc-FG01",
     baseUnit: "EA",
     stockQuantity: 125,
-    reorderPoint: 80,
-    safetyStock: 30,
+    reorderPoint: 50,
+    safetyStock: 20,
     valuationClass: "3000",
     batchNumber: "BATCH-DEL1-0002",
-    lastGoodsReceipt: d("2026-05-08T10:00:00"),
-    lastGoodsIssue: d("2026-05-20T09:45:00"),
+    lastGoodsReceipt: d("2026-05-12T09:15:00"),
+    lastGoodsIssue: d("2026-05-20T11:45:00"),
   },
   {
     materialId: "MAT-4410",
-    description: "Carbon Steel Flange DN150 PN40",
+    description: "Cast Iron Housing Frame - Size L",
     materialType: "HALB",
     plantId: "PLNT-MUM2",
-    storageLocation: "SLoc-01",
+    storageLocation: "SLoc-02",
     baseUnit: "EA",
-    stockQuantity: 900,
-    reorderPoint: 200,
-    safetyStock: 100,
-    valuationClass: "3100",
-    batchNumber: "BATCH-MUM2-0010",
-    lastGoodsReceipt: d("2026-04-28T07:00:00"),
-    lastGoodsIssue: d("2026-05-15T11:30:00"),
+    stockQuantity: 80,
+    reorderPoint: 120,
+    safetyStock: 40,
+    valuationClass: "7920",
+    batchNumber: "BATCH-MUM2-0402",
+    lastGoodsReceipt: d("2026-04-20T16:00:00"),
+    lastGoodsIssue: d("2026-05-15T10:10:00"),
   },
   {
     materialId: "MAT-4411",
-    description: "Stainless Steel Flange DN200 PN16",
+    description: "Cast Iron Housing Frame - Size M",
     materialType: "HALB",
     plantId: "PLNT-MUM2",
-    storageLocation: "SLoc-01",
+    storageLocation: "SLoc-02",
     baseUnit: "EA",
-    stockQuantity: 60,
+    stockQuantity: 245,
     reorderPoint: 150,
-    safetyStock: 75,
-    valuationClass: "3100",
-    batchNumber: "BATCH-MUM2-0011",
-    lastGoodsReceipt: d("2026-04-20T06:30:00"),
-    lastGoodsIssue: d("2026-05-22T16:00:00"),
+    safetyStock: 50,
+    valuationClass: "7920",
+    batchNumber: "BATCH-MUM2-0403",
+    lastGoodsReceipt: d("2026-05-01T11:00:00"),
+    lastGoodsIssue: d("2026-05-16T09:20:00"),
   },
   {
     materialId: "MAT-5530",
-    description: "Industrial Lubricant ISO VG 68 – 200L Drum",
+    description: "Alloy Steel Rotor Shaft - 50mm",
     materialType: "ROH",
     plantId: "PLNT-BLR3",
     storageLocation: "SLoc-RM02",
-    baseUnit: "L",
-    stockQuantity: 4800,
-    reorderPoint: 1000,
-    safetyStock: 500,
-    valuationClass: "3200",
-    batchNumber: "BATCH-BLR3-0020",
-    lastGoodsReceipt: d("2026-05-01T09:15:00"),
-    lastGoodsIssue: d("2026-05-19T13:00:00"),
+    baseUnit: "EA",
+    stockQuantity: 1450,
+    reorderPoint: 800,
+    safetyStock: 300,
+    valuationClass: "3000",
+    batchNumber: "BATCH-BLR3-9912",
+    lastGoodsReceipt: d("2026-05-14T07:45:00"),
+    lastGoodsIssue: d("2026-05-22T15:30:00"),
   },
   {
     materialId: "MAT-5531",
-    description: "Synthetic Gear Oil ISO VG 220 – 200L Drum",
+    description: "Stainless Steel Rotor Shaft - 75mm",
     materialType: "ROH",
     plantId: "PLNT-BLR3",
     storageLocation: "SLoc-RM02",
-    baseUnit: "L",
-    stockQuantity: 2200,
-    reorderPoint: 800,
-    safetyStock: 400,
-    valuationClass: "3200",
-    batchNumber: "BATCH-BLR3-0021",
-    lastGoodsReceipt: d("2026-04-15T11:00:00"),
-    lastGoodsIssue: d("2026-05-21T10:30:00"),
+    baseUnit: "EA",
+    stockQuantity: 410,
+    reorderPoint: 500,
+    safetyStock: 150,
+    valuationClass: "3000",
+    batchNumber: "BATCH-BLR3-9913",
+    lastGoodsReceipt: d("2026-05-03T14:20:00"),
+    lastGoodsIssue: d("2026-05-19T08:15:00"),
   },
   {
     materialId: "MAT-7700",
-    description: "PLC Control Module Siemens S7-1500",
-    materialType: "FERT",
+    description: "Heavy Duty Radial Bearing 80mm",
+    materialType: "ROH",
     plantId: "PLNT-HYD4",
-    storageLocation: "SLoc-02",
+    storageLocation: "SLoc-01",
     baseUnit: "EA",
-    stockQuantity: 45,
-    reorderPoint: 20,
-    safetyStock: 10,
-    valuationClass: "7000",
-    batchNumber: "BATCH-HYD4-0030",
-    lastGoodsReceipt: d("2026-05-05T08:00:00"),
-    lastGoodsIssue: d("2026-05-17T15:45:00"),
+    stockQuantity: 730,
+    reorderPoint: 400,
+    safetyStock: 150,
+    valuationClass: "3030",
+    batchNumber: "BATCH-HYD4-771",
+    lastGoodsReceipt: d("2026-05-18T10:00:00"),
+    lastGoodsIssue: d("2026-05-24T16:40:00"),
   },
   {
     materialId: "MAT-7701",
-    description: "HMI Touch Panel 15″ – IP65 Rated",
-    materialType: "FERT",
+    description: "Thrust Ball Bearing 120mm",
+    materialType: "ROH",
     plantId: "PLNT-HYD4",
-    storageLocation: "SLoc-02",
+    storageLocation: "SLoc-01",
     baseUnit: "EA",
-    stockQuantity: 18,
-    reorderPoint: 25,
-    safetyStock: 12,
-    valuationClass: "7000",
-    batchNumber: "BATCH-HYD4-0031",
-    lastGoodsReceipt: d("2026-04-22T09:30:00"),
-    lastGoodsIssue: d("2026-05-16T12:00:00"),
+    stockQuantity: 89,
+    reorderPoint: 150,
+    safetyStock: 60,
+    valuationClass: "3030",
+    batchNumber: "BATCH-HYD4-772",
+    lastGoodsReceipt: d("2026-05-15T09:00:00"),
+    lastGoodsIssue: d("2026-05-23T11:20:00"),
   },
   {
     materialId: "MAT-8801",
-    description: "High-Temp Ceramic Bearing 6210-2Z",
+    description: "High Temp Synthetic Sealant G2",
     materialType: "HIBE",
     plantId: "PLNT-DEL1",
     storageLocation: "SLoc-03",
-    baseUnit: "EA",
-    stockQuantity: 520,
-    reorderPoint: 150,
-    safetyStock: 75,
-    valuationClass: "4000",
-    batchNumber: "BATCH-DEL1-0040",
-    lastGoodsReceipt: d("2026-05-12T07:15:00"),
-    lastGoodsIssue: d("2026-05-23T08:30:00"),
+    baseUnit: "L",
+    stockQuantity: 120,
+    reorderPoint: 100,
+    safetyStock: 30,
+    valuationClass: "3040",
+    batchNumber: "BATCH-DEL1-S01",
+    lastGoodsReceipt: d("2026-05-02T13:10:00"),
+    lastGoodsIssue: d("2026-05-17T15:00:00"),
   },
   {
     materialId: "MAT-8802",
-    description: "Self-Aligning Ball Bearing 2208 ETN9",
+    description: "Fluorocarbon O-Ring Kit (100pc)",
     materialType: "HIBE",
     plantId: "PLNT-DEL1",
     storageLocation: "SLoc-03",
-    baseUnit: "EA",
-    stockQuantity: 30,
-    reorderPoint: 100,
-    safetyStock: 40,
-    valuationClass: "4000",
-    batchNumber: "BATCH-DEL1-0041",
-    lastGoodsReceipt: d("2026-04-30T06:00:00"),
-    lastGoodsIssue: d("2026-05-25T10:00:00"),
+    baseUnit: "KT",
+    stockQuantity: 45,
+    reorderPoint: 80,
+    safetyStock: 25,
+    valuationClass: "3040",
+    batchNumber: "BATCH-DEL1-S02",
+    lastGoodsReceipt: d("2026-05-11T15:20:00"),
+    lastGoodsIssue: d("2026-05-21T10:45:00"),
   },
   {
     materialId: "MAT-3301",
-    description: "Pneumatic Cylinder DNC-80-200-PPV-A",
-    materialType: "HALB",
-    plantId: "PLNT-MUM2",
-    storageLocation: "SLoc-02",
+    description: "Monolithic Logic Board Controller",
+    materialType: "FERT",
+    plantId: "PLNT-BLR3",
+    storageLocation: "SLoc-FG01",
     baseUnit: "EA",
-    stockQuantity: 210,
-    reorderPoint: 50,
-    safetyStock: 25,
-    valuationClass: "3100",
-    batchNumber: "BATCH-MUM2-0050",
-    lastGoodsReceipt: d("2026-05-03T10:30:00"),
-    lastGoodsIssue: d("2026-05-20T14:00:00"),
+    stockQuantity: 67,
+    reorderPoint: 75,
+    safetyStock: 20,
+    valuationClass: "7900",
+    batchNumber: "BATCH-BLR3-C09",
+    lastGoodsReceipt: d("2026-05-08T08:00:00"),
+    lastGoodsIssue: d("2026-05-22T14:10:00"),
   },
   {
     materialId: "MAT-3302",
-    description: "Solenoid Valve 5/2 Way – 24VDC",
+    description: "Optocoupler Interface Module v2",
     materialType: "HALB",
     plantId: "PLNT-BLR3",
-    storageLocation: "SLoc-01",
+    storageLocation: "SLoc-02",
     baseUnit: "EA",
-    stockQuantity: 380,
-    reorderPoint: 120,
-    safetyStock: 60,
-    valuationClass: "3100",
-    batchNumber: "BATCH-BLR3-0051",
-    lastGoodsReceipt: d("2026-05-09T08:45:00"),
-    lastGoodsIssue: d("2026-05-24T16:30:00"),
+    stockQuantity: 890,
+    reorderPoint: 400,
+    safetyStock: 100,
+    valuationClass: "7900",
+    batchNumber: "BATCH-BLR3-C10",
+    lastGoodsReceipt: d("2026-05-09T09:30:00"),
+    lastGoodsIssue: d("2026-05-23T11:00:00"),
   },
 ];
 
 const INITIAL_WORK_ORDERS: WorkOrder[] = [
   {
     workOrderId: "WO-8801",
-    description: "Overhaul hydraulic power pack – Press Line 3",
-    functionalLocation: "PLNT-DEL1-PL03-HYD",
-    equipmentId: "EQ-HPP-3001",
+    description: "Repair hydraulic fluid leakage on High-Pressure Pump A",
+    functionalLocation: "DEL1-PUMP-ROOM-A",
+    equipmentId: "EQ-HYDPUMP-01",
     priority: "HIGH",
     status: "IN_PROGRESS",
     orderType: "PM01",
-    maintenanceActivityType: "Corrective Maintenance",
-    plannedStartDate: d("2026-05-20T06:00:00"),
-    plannedEndDate: d("2026-05-25T18:00:00"),
-    actualStartDate: d("2026-05-20T07:30:00"),
-    responsiblePerson: "Rajan Mehta",
-    estimatedCost: 185000,
-    functionalCodes: ["HYD-ERR-01", "HYD-ERR-02"],
-    notes:
-      "Pump seals degraded; full overhaul of HPP-3001 including accumulator recharge. Spare parts pre-staged in SLoc-03.",
+    maintenanceActivityType: "001",
+    plannedStartDate: d("2026-06-01T08:00:00"),
+    plannedEndDate: d("2026-06-02T17:00:00"),
+    actualStartDate: d("2026-06-01T08:30:00"),
+    responsiblePerson: "Vikram Malhotra",
+    estimatedCost: 1200,
+    functionalCodes: ["HYD-ERR-01", "PNEU-LEAK-01"],
+    notes: "Main pressure seal degraded. Replaced with MAT-8802 O-ring.",
   },
   {
     workOrderId: "WO-8802",
-    description: "Replace VFD on Cooling Tower Fan CT-02",
-    functionalLocation: "PLNT-MUM2-UT01-CT02",
-    equipmentId: "EQ-VFD-2045",
-    priority: "HIGH",
+    description: "Calibrate thermal sensor on Induction Furnace B",
+    functionalLocation: "MUM2-FURNACE-B",
+    equipmentId: "EQ-INDFURN-02",
+    priority: "MEDIUM",
     status: "OPEN",
-    orderType: "PM01",
-    maintenanceActivityType: "Corrective Maintenance",
-    plannedStartDate: d("2026-05-28T06:00:00"),
-    plannedEndDate: d("2026-05-29T18:00:00"),
-    responsiblePerson: "Amit Kulkarni",
-    estimatedCost: 72000,
-    functionalCodes: ["ELEC-FAIL-01", "ELEC-FAIL-02"],
-    notes:
-      "VFD fault code F0003 – over-current trip. Replacement unit ABB ACS580-01 available in warehouse.",
+    orderType: "PM02",
+    maintenanceActivityType: "003",
+    plannedStartDate: d("2026-06-03T09:00:00"),
+    plannedEndDate: d("2026-06-03T12:00:00"),
+    responsiblePerson: "Priya Sharma",
+    estimatedCost: 350,
+    functionalCodes: ["THERM-OVR-02", "CTRL-SYS-01"],
+    notes: "Sensor drifting +12C. Requires calibration loop check.",
   },
   {
     workOrderId: "WO-8803",
-    description: "Quarterly lubrication – CNC Machining Center MC-07",
-    functionalLocation: "PLNT-BLR3-MC07-LUB",
-    equipmentId: "EQ-CNC-7010",
-    priority: "MEDIUM",
-    status: "OPEN",
-    orderType: "PM02",
-    maintenanceActivityType: "Preventive Maintenance",
-    plannedStartDate: d("2026-06-01T06:00:00"),
-    plannedEndDate: d("2026-06-01T14:00:00"),
-    responsiblePerson: "Venkatesh Rao",
-    estimatedCost: 12500,
-    functionalCodes: ["MECH-WEAR-01"],
-    notes:
-      "Standard quarterly PM – check spindle bearings, way-lube reservoir, hydraulic chuck pressure.",
-  },
-  {
-    workOrderId: "WO-8804",
-    description: "Thermal camera inspection – Electrical Panel Board EPB-12",
-    functionalLocation: "PLNT-HYD4-EP12",
-    equipmentId: "EQ-EPB-1200",
-    priority: "LOW",
-    status: "COMPLETED",
-    orderType: "PM03",
-    maintenanceActivityType: "Predictive Maintenance",
-    plannedStartDate: d("2026-05-10T08:00:00"),
-    plannedEndDate: d("2026-05-10T12:00:00"),
-    actualStartDate: d("2026-05-10T08:15:00"),
-    actualEndDate: d("2026-05-10T11:40:00"),
-    responsiblePerson: "Priya Sharma",
-    estimatedCost: 8500,
-    functionalCodes: ["THERM-OVR-01", "THERM-OVR-02"],
-    notes:
-      "Hotspot detected on MCCB feeder #4 (87°C). Recommend tightening torque check within 30 days.",
-  },
-  {
-    workOrderId: "WO-8805",
-    description: "Replace worn conveyor belt – Packaging Line PK-01",
-    functionalLocation: "PLNT-DEL1-PK01-CONV",
-    equipmentId: "EQ-CONV-1005",
-    priority: "MEDIUM",
-    status: "IN_PROGRESS",
-    orderType: "PM01",
-    maintenanceActivityType: "Corrective Maintenance",
-    plannedStartDate: d("2026-05-22T06:00:00"),
-    plannedEndDate: d("2026-05-24T18:00:00"),
-    actualStartDate: d("2026-05-22T06:45:00"),
-    responsiblePerson: "Suresh Patel",
-    estimatedCost: 45000,
-    functionalCodes: ["MECH-WEAR-01", "MECH-WEAR-02"],
-    notes:
-      "Belt surface cracking observed. New Habasit belt (2200mm x 15m) staged. Tension rollers to be inspected.",
-  },
-  {
-    workOrderId: "WO-8806",
-    description: "Annual calibration – Pressure Transmitters Area A",
-    functionalLocation: "PLNT-MUM2-PROC-A",
-    equipmentId: "EQ-PT-AREA-A",
-    priority: "LOW",
-    status: "CLOSED",
-    orderType: "PM02",
-    maintenanceActivityType: "Preventive Maintenance",
-    plannedStartDate: d("2026-04-15T06:00:00"),
-    plannedEndDate: d("2026-04-17T18:00:00"),
-    actualStartDate: d("2026-04-15T07:00:00"),
-    actualEndDate: d("2026-04-16T16:00:00"),
-    responsiblePerson: "Kavitha Nair",
-    estimatedCost: 22000,
-    functionalCodes: ["CTRL-SYS-01"],
-    notes:
-      "12 transmitters calibrated using Fluke 754. All within ±0.1% FS. Certificates uploaded to DMS.",
-  },
-  {
-    workOrderId: "WO-8807",
-    description: "Pneumatic leak audit – Assembly Shop",
-    functionalLocation: "PLNT-BLR3-ASSY",
-    equipmentId: "EQ-PNEU-ASSY",
-    priority: "MEDIUM",
-    status: "OPEN",
-    orderType: "PM03",
-    maintenanceActivityType: "Predictive Maintenance",
-    plannedStartDate: d("2026-06-05T06:00:00"),
-    plannedEndDate: d("2026-06-06T18:00:00"),
-    responsiblePerson: "Deepak Joshi",
-    estimatedCost: 15000,
-    functionalCodes: ["PNEU-LEAK-01"],
-    notes:
-      "Ultrasonic leak detection sweep. Previous audit found 14 leak points; verify repairs and identify new leaks.",
-  },
-  {
-    workOrderId: "WO-8808",
-    description: "Emergency repair – Boiler feed-water pump BFP-02",
-    functionalLocation: "PLNT-HYD4-UT02-BFP02",
-    equipmentId: "EQ-BFP-2002",
+    description: "Replace degraded stator bearing in Conveyor Belt Motor",
+    functionalLocation: "BLR3-CONVEYOR-04",
+    equipmentId: "EQ-CONVMTR-04",
     priority: "HIGH",
     status: "COMPLETED",
     orderType: "PM01",
-    maintenanceActivityType: "Corrective Maintenance",
-    plannedStartDate: d("2026-05-14T00:00:00"),
-    plannedEndDate: d("2026-05-15T12:00:00"),
-    actualStartDate: d("2026-05-14T01:30:00"),
-    actualEndDate: d("2026-05-15T09:00:00"),
-    responsiblePerson: "Rajan Mehta",
-    estimatedCost: 135000,
-    functionalCodes: ["HYD-ERR-01", "MECH-WEAR-02", "THERM-OVR-01"],
-    notes:
-      "Mechanical seal failure caused by thermal shock. Replaced seal cartridge and impeller. Vibration baseline recorded.",
+    maintenanceActivityType: "001",
+    plannedStartDate: d("2026-05-25T08:00:00"),
+    plannedEndDate: d("2026-05-26T16:00:00"),
+    actualStartDate: d("2026-05-25T08:15:00"),
+    actualEndDate: d("2026-05-26T14:30:00"),
+    responsiblePerson: "Amit Patel",
+    estimatedCost: 2400,
+    functionalCodes: ["MECH-WEAR-01", "MECH-WEAR-02"],
+    notes: "Replaced with MAT-7700 bearing. Vibrations returned to normal.",
+  },
+  {
+    workOrderId: "WO-8804",
+    description: "Annual preventive electrical inspection of Substations",
+    functionalLocation: "BLR3-SUBSTATION-01",
+    equipmentId: "EQ-SUBSTAT-01",
+    priority: "LOW",
+    status: "OPEN",
+    orderType: "PM03",
+    maintenanceActivityType: "005",
+    plannedStartDate: d("2026-06-10T08:00:00"),
+    plannedEndDate: d("2026-06-12T17:00:00"),
+    responsiblePerson: "Amit Patel",
+    estimatedCost: 1500,
+    functionalCodes: ["ELEC-FAIL-02"],
+    notes: "Standard insulation testing and transformer oil sampling.",
+  },
+  {
+    workOrderId: "WO-8805",
+    description: "Emergency fix for main PLC circuit board failures",
+    functionalLocation: "HYD4-CONTROL-ROOM",
+    equipmentId: "EQ-CTRLPLC-09",
+    priority: "HIGH",
+    status: "IN_PROGRESS",
+    orderType: "PM01",
+    maintenanceActivityType: "002",
+    plannedStartDate: d("2026-06-02T14:00:00"),
+    plannedEndDate: d("2026-06-03T18:00:00"),
+    actualStartDate: d("2026-06-02T14:45:00"),
+    responsiblePerson: "Rahul Verma",
+    estimatedCost: 3200,
+    functionalCodes: ["ELEC-FAIL-04", "CTRL-SYS-01"],
+    notes: "Intermittent optocoupler faults. Using MAT-3302 modules.",
+  },
+  {
+    workOrderId: "WO-8806",
+    description: "Inspect pneumatic lines for air leakages",
+    functionalLocation: "MUM2-PRESS-LINE",
+    equipmentId: "EQ-PNEUPRESS-03",
+    priority: "MEDIUM",
+    status: "CLOSED",
+    orderType: "PM02",
+    maintenanceActivityType: "001",
+    plannedStartDate: d("2026-05-10T09:00:00"),
+    plannedEndDate: d("2026-05-10T13:00:00"),
+    actualStartDate: d("2026-05-10T09:10:00"),
+    actualEndDate: d("2026-05-10T12:00:00"),
+    responsiblePerson: "Priya Sharma",
+    estimatedCost: 200,
+    functionalCodes: ["PNEU-LEAK-01"],
+    notes: "Hose connector loose at joint 4B. Cleaned and tightened.",
+  },
+  {
+    workOrderId: "WO-8807",
+    description: "Replace drive motor cooling fans due to overheating",
+    functionalLocation: "DEL1-DRIVE-BAY-03",
+    equipmentId: "EQ-DRVMTR-03",
+    priority: "HIGH",
+    status: "COMPLETED",
+    orderType: "PM01",
+    maintenanceActivityType: "001",
+    plannedStartDate: d("2026-05-28T10:00:00"),
+    plannedEndDate: d("2026-05-28T15:00:00"),
+    actualStartDate: d("2026-05-28T10:15:00"),
+    actualEndDate: d("2026-05-28T14:45:00"),
+    responsiblePerson: "Vikram Malhotra",
+    estimatedCost: 650,
+    functionalCodes: ["THERM-OVR-01", "THERM-OVR-02"],
+    notes: "Fan motors short circuited. Swapped with new unit F-103.",
+  },
+  {
+    workOrderId: "WO-8808",
+    description: "Conduct mechanical alignment checks on Turbine Shaft B",
+    functionalLocation: "HYD4-TURBINE-HALL",
+    equipmentId: "EQ-STMTURB-02",
+    priority: "MEDIUM",
+    status: "OPEN",
+    orderType: "PM02",
+    maintenanceActivityType: "004",
+    plannedStartDate: d("2026-06-08T08:00:00"),
+    plannedEndDate: d("2026-06-09T17:00:00"),
+    responsiblePerson: "Rahul Verma",
+    estimatedCost: 1800,
+    functionalCodes: ["MECH-WEAR-02"],
+    notes: "Coupling runout check. Dial indicator measurements required.",
   },
 ];
 
 const INITIAL_SALES_ORDERS: SalesOrder[] = [
   {
     salesOrderId: "SO-10001",
-    customerName: "Tata Steel Ltd.",
-    customerCode: "CUST-TSL-001",
-    orderDate: d("2026-04-10T10:00:00"),
-    deliveryDate: d("2026-05-05T10:00:00"),
-    netValue: 2450000,
-    currency: "INR",
+    customerName: "Tata Steel Logistics",
+    customerCode: "CUST-TATA01",
+    orderDate: d("2026-05-01"),
+    deliveryDate: d("2026-05-05"),
+    netValue: 12500,
+    currency: "USD",
     status: "DELIVERED",
     items: [
       {
@@ -520,7 +585,7 @@ const INITIAL_SALES_ORDERS: SalesOrder[] = [
         materialId: "MAT-9921",
         description: "Hydraulic Pump Assembly – 250bar",
         quantity: 5,
-        unitPrice: 490000,
+        unitPrice: 2500,
       },
     ],
     salesOrg: "1000",
@@ -528,27 +593,27 @@ const INITIAL_SALES_ORDERS: SalesOrder[] = [
   },
   {
     salesOrderId: "SO-10002",
-    customerName: "Larsen & Toubro",
-    customerCode: "CUST-LNT-002",
-    orderDate: d("2026-04-18T09:30:00"),
-    deliveryDate: d("2026-05-12T09:30:00"),
-    netValue: 1080000,
-    currency: "INR",
+    customerName: "Reliance Industries Ltd",
+    customerCode: "CUST-RELI02",
+    orderDate: d("2026-05-03"),
+    deliveryDate: d("2026-05-07"),
+    netValue: 47500,
+    currency: "USD",
     status: "DELIVERED",
     items: [
       {
         itemId: "10",
-        materialId: "MAT-4410",
-        description: "Carbon Steel Flange DN150 PN40",
-        quantity: 200,
-        unitPrice: 3400,
+        materialId: "MAT-9922",
+        description: "Hydraulic Pump Assembly – 400bar",
+        quantity: 10,
+        unitPrice: 4500,
       },
       {
         itemId: "20",
-        materialId: "MAT-4411",
-        description: "Stainless Steel Flange DN200 PN16",
-        quantity: 50,
-        unitPrice: 8000,
+        materialId: "MAT-8801",
+        description: "High Temp Synthetic Sealant G2",
+        quantity: 25,
+        unitPrice: 100,
       },
     ],
     salesOrg: "1000",
@@ -556,55 +621,55 @@ const INITIAL_SALES_ORDERS: SalesOrder[] = [
   },
   {
     salesOrderId: "SO-10003",
-    customerName: "Bharat Heavy Electricals",
-    customerCode: "CUST-BHEL-003",
-    orderDate: d("2026-04-25T11:00:00"),
-    deliveryDate: d("2026-06-01T11:00:00"),
-    netValue: 975000,
-    currency: "INR",
-    status: "CONFIRMED",
-    items: [
-      {
-        itemId: "10",
-        materialId: "MAT-7700",
-        description: "PLC Control Module Siemens S7-1500",
-        quantity: 10,
-        unitPrice: 65000,
-      },
-      {
-        itemId: "20",
-        materialId: "MAT-7701",
-        description: "HMI Touch Panel 15″ – IP65 Rated",
-        quantity: 5,
-        unitPrice: 45000,
-      },
-    ],
-    salesOrg: "2000",
-    distributionChannel: "20",
-  },
-  {
-    salesOrderId: "SO-10004",
-    customerName: "Hindalco Industries",
-    customerCode: "CUST-HIN-004",
-    orderDate: d("2026-05-02T08:00:00"),
-    deliveryDate: d("2026-05-28T08:00:00"),
-    netValue: 640000,
-    currency: "INR",
+    customerName: "Larsen & Toubro Ltd",
+    customerCode: "CUST-LART03",
+    orderDate: d("2026-05-10"),
+    deliveryDate: d("2026-05-15"),
+    netValue: 18000,
+    currency: "USD",
     status: "SHIPPED",
     items: [
       {
         itemId: "10",
-        materialId: "MAT-5530",
-        description: "Industrial Lubricant ISO VG 68 – 200L Drum",
-        quantity: 800,
+        materialId: "MAT-9921",
+        description: "Hydraulic Pump Assembly – 250bar",
+        quantity: 6,
+        unitPrice: 2500,
+      },
+      {
+        itemId: "20",
+        materialId: "MAT-8802",
+        description: "Fluorocarbon O-Ring Kit (100pc)",
+        quantity: 40,
+        unitPrice: 75,
+      },
+    ],
+    salesOrg: "1000",
+    distributionChannel: "10",
+  },
+  {
+    salesOrderId: "SO-10004",
+    customerName: "Bharat Heavy Electricals",
+    customerCode: "CUST-BHEL04",
+    orderDate: d("2026-05-15"),
+    deliveryDate: d("2026-05-20"),
+    netValue: 9800,
+    currency: "USD",
+    status: "DELIVERED",
+    items: [
+      {
+        itemId: "10",
+        materialId: "MAT-7700",
+        description: "Heavy Duty Radial Bearing 80mm",
+        quantity: 20,
         unitPrice: 400,
       },
       {
         itemId: "20",
-        materialId: "MAT-5531",
-        description: "Synthetic Gear Oil ISO VG 220 – 200L Drum",
-        quantity: 400,
-        unitPrice: 800,
+        materialId: "MAT-7701",
+        description: "Thrust Ball Bearing 120mm",
+        quantity: 6,
+        unitPrice: 300,
       },
     ],
     salesOrg: "1000",
@@ -612,111 +677,97 @@ const INITIAL_SALES_ORDERS: SalesOrder[] = [
   },
   {
     salesOrderId: "SO-10005",
-    customerName: "JSW Steel",
-    customerCode: "CUST-JSW-005",
-    orderDate: d("2026-05-06T14:00:00"),
-    deliveryDate: d("2026-06-10T14:00:00"),
-    netValue: 1560000,
-    currency: "INR",
-    status: "PENDING",
-    items: [
-      {
-        itemId: "10",
-        materialId: "MAT-9922",
-        description: "Hydraulic Pump Assembly – 400bar",
-        quantity: 3,
-        unitPrice: 520000,
-      },
-    ],
-    salesOrg: "2000",
-    distributionChannel: "10",
-  },
-  {
-    salesOrderId: "SO-10006",
-    customerName: "Adani Ports & SEZ",
-    customerCode: "CUST-ADA-006",
-    orderDate: d("2026-05-08T10:30:00"),
-    deliveryDate: d("2026-06-05T10:30:00"),
-    netValue: 345000,
-    currency: "INR",
+    customerName: "Mahindra Engineering Corp",
+    customerCode: "CUST-MAHI05",
+    orderDate: d("2026-05-20"),
+    deliveryDate: d("2026-05-25"),
+    netValue: 22000,
+    currency: "USD",
     status: "CONFIRMED",
     items: [
       {
         itemId: "10",
-        materialId: "MAT-8801",
-        description: "High-Temp Ceramic Bearing 6210-2Z",
+        materialId: "MAT-4411",
+        description: "Cast Iron Housing Frame - Size M",
         quantity: 100,
-        unitPrice: 1200,
-      },
-      {
-        itemId: "20",
-        materialId: "MAT-8802",
-        description: "Self-Aligning Ball Bearing 2208 ETN9",
-        quantity: 150,
-        unitPrice: 1500,
+        unitPrice: 220,
       },
     ],
     salesOrg: "1000",
-    distributionChannel: "20",
+    distributionChannel: "12",
   },
   {
-    salesOrderId: "SO-10007",
-    customerName: "Mahindra & Mahindra",
-    customerCode: "CUST-MAH-007",
-    orderDate: d("2026-05-12T09:00:00"),
-    deliveryDate: d("2026-06-08T09:00:00"),
-    netValue: 472500,
-    currency: "INR",
+    salesOrderId: "SO-10006",
+    customerName: "Infosys Campus Maintenance",
+    customerCode: "CUST-INFO06",
+    orderDate: d("2026-05-22"),
+    deliveryDate: d("2026-05-28"),
+    netValue: 14500,
+    currency: "USD",
     status: "PENDING",
     items: [
       {
         itemId: "10",
         materialId: "MAT-3301",
-        description: "Pneumatic Cylinder DNC-80-200-PPV-A",
-        quantity: 50,
-        unitPrice: 5500,
+        description: "Monolithic Logic Board Controller",
+        quantity: 15,
+        unitPrice: 800,
       },
       {
         itemId: "20",
         materialId: "MAT-3302",
-        description: "Solenoid Valve 5/2 Way – 24VDC",
-        quantity: 75,
-        unitPrice: 2700,
+        description: "Optocoupler Interface Module v2",
+        quantity: 50,
+        unitPrice: 50,
       },
     ],
-    salesOrg: "2000",
+    salesOrg: "1000",
+    distributionChannel: "12",
+  },
+  {
+    salesOrderId: "SO-10007",
+    customerName: "Adani Power Ltd",
+    customerCode: "CUST-ADAN07",
+    orderDate: d("2026-05-25"),
+    deliveryDate: d("2026-05-30"),
+    netValue: 34500,
+    currency: "USD",
+    status: "CONFIRMED",
+    items: [
+      {
+        itemId: "10",
+        materialId: "MAT-9922",
+        description: "Hydraulic Pump Assembly – 400bar",
+        quantity: 7,
+        unitPrice: 4500,
+      },
+      {
+        itemId: "20",
+        materialId: "MAT-5531",
+        description: "Stainless Steel Rotor Shaft - 75mm",
+        quantity: 10,
+        unitPrice: 300,
+      },
+    ],
+    salesOrg: "1000",
     distributionChannel: "10",
   },
   {
     salesOrderId: "SO-10008",
-    customerName: "Reliance Industries",
-    customerCode: "CUST-RIL-008",
-    orderDate: d("2026-04-05T07:00:00"),
-    deliveryDate: d("2026-04-28T07:00:00"),
-    netValue: 3200000,
-    currency: "INR",
-    status: "DELIVERED",
+    customerName: "JSW Steel Works",
+    customerCode: "CUST-JSWS08",
+    orderDate: d("2026-05-26"),
+    deliveryDate: d("2026-05-31"),
+    netValue: 8600,
+    currency: "USD",
+    status: "PENDING",
     items: [
       {
         itemId: "10",
-        materialId: "MAT-9921",
-        description: "Hydraulic Pump Assembly – 250bar",
-        quantity: 4,
-        unitPrice: 490000,
-      },
-      {
-        itemId: "20",
-        materialId: "MAT-7700",
-        description: "PLC Control Module Siemens S7-1500",
-        quantity: 12,
-        unitPrice: 65000,
-      },
-      {
-        itemId: "30",
-        materialId: "MAT-5530",
-        description: "Industrial Lubricant ISO VG 68 – 200L Drum",
-        quantity: 1000,
-        unitPrice: 420,
+        materialId: "MAT-4410",
+        description: "Cast Iron Housing Frame - Size L",
+        quantity: 20,
+        unitPrice: 430,
       },
     ],
     salesOrg: "1000",
@@ -724,94 +775,98 @@ const INITIAL_SALES_ORDERS: SalesOrder[] = [
   },
   {
     salesOrderId: "SO-10009",
-    customerName: "UltraTech Cement",
-    customerCode: "CUST-UTC-009",
-    orderDate: d("2026-05-15T12:00:00"),
-    deliveryDate: d("2026-06-15T12:00:00"),
-    netValue: 890000,
-    currency: "INR",
-    status: "PENDING",
+    customerName: "Wind Power India",
+    customerCode: "CUST-WIND09",
+    orderDate: d("2026-05-28"),
+    deliveryDate: d("2026-06-02"),
+    netValue: 12000,
+    currency: "USD",
+    status: "DELIVERED",
     items: [
       {
         itemId: "10",
-        materialId: "MAT-9922",
-        description: "Hydraulic Pump Assembly – 400bar",
-        quantity: 1,
-        unitPrice: 520000,
-      },
-      {
-        itemId: "20",
-        materialId: "MAT-3301",
-        description: "Pneumatic Cylinder DNC-80-200-PPV-A",
-        quantity: 30,
-        unitPrice: 5500,
-      },
-      {
-        itemId: "30",
-        materialId: "MAT-8801",
-        description: "High-Temp Ceramic Bearing 6210-2Z",
-        quantity: 100,
-        unitPrice: 2050,
-      },
-    ],
-    salesOrg: "2000",
-    distributionChannel: "20",
-  },
-  {
-    salesOrderId: "SO-10010",
-    customerName: "Godrej & Boyce",
-    customerCode: "CUST-GNB-010",
-    orderDate: d("2026-05-18T15:30:00"),
-    deliveryDate: d("2026-06-20T15:30:00"),
-    netValue: 162000,
-    currency: "INR",
-    status: "CANCELLED",
-    items: [
-      {
-        itemId: "10",
-        materialId: "MAT-4410",
-        description: "Carbon Steel Flange DN150 PN40",
-        quantity: 30,
-        unitPrice: 3400,
-      },
-      {
-        itemId: "20",
-        materialId: "MAT-4411",
-        description: "Stainless Steel Flange DN200 PN16",
-        quantity: 10,
-        unitPrice: 6000,
+        materialId: "MAT-5530",
+        description: "Alloy Steel Rotor Shaft - 50mm",
+        quantity: 80,
+        unitPrice: 150,
       },
     ],
     salesOrg: "1000",
     distributionChannel: "10",
   },
+  {
+    salesOrderId: "SO-10010",
+    customerName: "Godrej Manufacturing",
+    customerCode: "CUST-GODR10",
+    orderDate: d("2026-05-29"),
+    deliveryDate: d("2026-06-03"),
+    netValue: 17200,
+    currency: "USD",
+    status: "SHIPPED",
+    items: [
+      {
+        itemId: "10",
+        materialId: "MAT-9921",
+        description: "Hydraulic Pump Assembly – 250bar",
+        quantity: 5,
+        unitPrice: 2500,
+      },
+      {
+        itemId: "20",
+        materialId: "MAT-8802",
+        description: "Fluorocarbon O-Ring Kit (100pc)",
+        quantity: 60,
+        unitPrice: 75,
+      },
+      {
+        itemId: "30",
+        materialId: "MAT-8801",
+        description: "High Temp Synthetic Sealant G2",
+        quantity: 2,
+        unitPrice: 100,
+      },
+    ],
+    salesOrg: "1000",
+    distributionChannel: "12",
+  },
 ];
 
 /* ================================================================
-   4. Context Creation
+   4. Context Definition
    ================================================================ */
 
 const SapContext = createContext<SapContextType | undefined>(undefined);
 
 /* ================================================================
-   5. Provider Component
+   5. Provider Implementation
    ================================================================ */
 
-export const SapProvider: React.FC<{ children: ReactNode }> = ({
-  children,
-}) => {
-  const [materials, setMaterials] =
-    useState<SAPMaterial[]>(INITIAL_MATERIALS);
-  const [workOrders, setWorkOrders] =
-    useState<WorkOrder[]>(INITIAL_WORK_ORDERS);
-  const [salesOrders, setSalesOrders] =
-    useState<SalesOrder[]>(INITIAL_SALES_ORDERS);
+interface SapProviderProps {
+  children: ReactNode;
+}
+
+export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
+  // SAP Mock States
+  const [materials, setMaterials] = useState<SAPMaterial[]>(INITIAL_MATERIALS);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(INITIAL_WORK_ORDERS);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>(INITIAL_SALES_ORDERS);
   const [odataLogs, setOdataLogs] = useState<ODataLogEntry[]>([]);
   const [telemetry, setTelemetry] = useState<TelemetryEvent[]>([]);
-  const [odataDebuggerEnabled, setOdataDebuggerEnabled] =
-    useState<boolean>(false);
+  const [odataDebuggerEnabled, setOdataDebuggerEnabled] = useState(false);
 
-  /* ---------- internal helpers --------------------------------- */
+  // Live Multi-tenant DB States
+  const [userProfile, setUserProfile] = useState<Profile | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [employees, setEmployees] = useState<Profile[]>([]);
+  const [assignments, setAssignments] = useState<ProjectAssignment[]>([]);
+  const [tickets, setTickets] = useState<HelpTicket[]>([]);
+  const [emails, setEmails] = useState<TransactionalEmail[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [companyName, setCompanyName] = useState<string>("ApexOps SAP Headquarters");
+  const [dbLoading, setDbLoading] = useState<boolean>(true);
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
+
+  /* ---------- OData Middleware Stream Logging ------------------ */
 
   const pushODataLog = useCallback(
     (
@@ -819,6 +874,7 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
       endpoint: string,
       payload: unknown,
       statusCode: number,
+      duration: number,
     ) => {
       const entry: ODataLogEntry = {
         id: uuid(),
@@ -827,286 +883,231 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
         endpoint,
         payload,
         statusCode,
-        duration: randomDuration(),
+        duration,
         correlationId: uuid(),
       };
-      setOdataLogs((prev) => [...prev, entry]);
-      return entry;
+      setOdataLogs((prev) => [entry, ...prev].slice(0, 200));
     },
     [],
   );
+
+  /* ---------- Telemetry Dispatching ---------------------------- */
 
   const pushTelemetry = useCallback(
     (
       action: string,
       component: string,
       details: Record<string, unknown>,
-      debugEnabled: boolean,
+      debug: boolean,
     ) => {
-      const evt: TelemetryEvent = {
+      const event: TelemetryEvent = {
         id: uuid(),
         timestamp: new Date(),
         action,
         component,
         details,
       };
-      setTelemetry((prev) => [...prev, evt]);
+      setTelemetry((prev) => [event, ...prev]);
 
-      if (debugEnabled) {
-        const debugLog: ODataLogEntry = {
-          id: uuid(),
-          timestamp: new Date(),
-          method: "POST",
-          endpoint:
-            "/sap/opu/odata4/sap/API_TELEMETRY/A_TelemetryEvent",
-          payload: evt,
-          statusCode: 201,
-          duration: randomDuration(),
-          correlationId: uuid(),
-        };
-        setOdataLogs((prev) => [...prev, debugLog]);
+      if (debug) {
+        pushODataLog(
+          "POST",
+          `/sap/opu/odata4/sap/API_TELEMETRY/A_TelemetryEvent`,
+          event,
+          201,
+          randomDuration(),
+        );
       }
     },
-    [],
+    [pushODataLog],
   );
 
-  /* ---------- updateStock -------------------------------------- */
+  /* ---------- SAP Operations ----------------------------------- */
 
   const updateStock = useCallback(
     (materialId: string, newQuantity: number) => {
+      let oldQty = 0;
       setMaterials((prev) =>
-        prev.map((m) =>
-          m.materialId === materialId
-            ? { ...m, stockQuantity: newQuantity }
-            : m,
-        ),
-      );
-
-      pushODataLog(
-        "PATCH",
-        `/sap/opu/odata4/sap/API_MATERIAL_STOCK/A_MaterialStock('${materialId}')`,
-        {
-          d: {
-            Material: materialId,
-            MatlWrhsStkQtyInMatlBaseUnit: newQuantity.toString(),
-            MaterialBaseUnit: "EA",
-          },
-        },
-        200,
-      );
-
-      pushTelemetry(
-        "STOCK_UPDATED",
-        "MaterialManagement",
-        { materialId, newQuantity },
-        odataDebuggerEnabled,
-      );
-    },
-    [pushODataLog, pushTelemetry, odataDebuggerEnabled],
-  );
-
-  /* ---------- createWorkOrder ---------------------------------- */
-
-  const createWorkOrder = useCallback(
-    (fields: Partial<WorkOrder>) => {
-      const nextId = `WO-${String(
-        Math.floor(Math.random() * 9000) + 1000,
-      )}`;
-      const now = new Date();
-
-      const newWO: WorkOrder = {
-        workOrderId: fields.workOrderId ?? nextId,
-        description: fields.description ?? "New Maintenance Order",
-        functionalLocation:
-          fields.functionalLocation ?? "PLNT-DEL1-GEN",
-        equipmentId: fields.equipmentId ?? "EQ-GEN-0000",
-        priority: fields.priority ?? "MEDIUM",
-        status: fields.status ?? "OPEN",
-        orderType: fields.orderType ?? "PM01",
-        maintenanceActivityType:
-          fields.maintenanceActivityType ?? "Corrective Maintenance",
-        plannedStartDate: fields.plannedStartDate ?? now,
-        plannedEndDate:
-          fields.plannedEndDate ??
-          new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
-        actualStartDate: fields.actualStartDate,
-        actualEndDate: fields.actualEndDate,
-        responsiblePerson:
-          fields.responsiblePerson ?? "Unassigned",
-        estimatedCost: fields.estimatedCost ?? 0,
-        functionalCodes: fields.functionalCodes ?? [],
-        notes: fields.notes ?? "",
-      };
-
-      setWorkOrders((prev) => [...prev, newWO]);
-
-      pushODataLog(
-        "POST",
-        "/sap/opu/odata4/sap/API_MAINTORDER/A_MaintenanceOrder",
-        {
-          d: {
-            MaintenanceOrder: newWO.workOrderId,
-            MaintenanceOrderDesc: newWO.description,
-            FunctionalLocation: newWO.functionalLocation,
-            Equipment: newWO.equipmentId,
-            MaintPriority: newWO.priority === "HIGH" ? "1" : newWO.priority === "MEDIUM" ? "2" : "3",
-            OrderType: newWO.orderType,
-            MaintActivityType: newWO.maintenanceActivityType,
-            MaintOrdBasicStartDate: newWO.plannedStartDate.toISOString(),
-            MaintOrdBasicEndDate: newWO.plannedEndDate.toISOString(),
-            PersonResponsible: newWO.responsiblePerson,
-            EstimatedCost: newWO.estimatedCost.toString(),
-          },
-        },
-        201,
-      );
-
-      pushTelemetry(
-        "WORK_ORDER_CREATED",
-        "PlantMaintenance",
-        {
-          workOrderId: newWO.workOrderId,
-          orderType: newWO.orderType,
-          priority: newWO.priority,
-        },
-        odataDebuggerEnabled,
-      );
-    },
-    [pushODataLog, pushTelemetry, odataDebuggerEnabled],
-  );
-
-  /* ---------- createSalesOrder --------------------------------- */
-
-  const createSalesOrder = useCallback(
-    (fields: Partial<SalesOrder>) => {
-      const nextId = `SO-${String(
-        Math.floor(Math.random() * 90000) + 10000,
-      )}`;
-      const now = new Date();
-
-      const newSO: SalesOrder = {
-        salesOrderId: fields.salesOrderId ?? nextId,
-        customerName: fields.customerName ?? "New Customer",
-        customerCode: fields.customerCode ?? "CUST-NEW-000",
-        orderDate: fields.orderDate ?? now,
-        deliveryDate:
-          fields.deliveryDate ??
-          new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
-        netValue: fields.netValue ?? 0,
-        currency: fields.currency ?? "INR",
-        status: fields.status ?? "PENDING",
-        items: fields.items ?? [],
-        salesOrg: fields.salesOrg ?? "1000",
-        distributionChannel: fields.distributionChannel ?? "10",
-      };
-
-      setSalesOrders((prev) => [...prev, newSO]);
-
-      pushODataLog(
-        "POST",
-        "/sap/opu/odata4/sap/API_SALES_ORDER/A_SalesOrder",
-        {
-          d: {
-            SalesOrder: newSO.salesOrderId,
-            SoldToParty: newSO.customerCode,
-            SalesOrganization: newSO.salesOrg,
-            DistributionChannel: newSO.distributionChannel,
-            RequestedDeliveryDate:
-              newSO.deliveryDate.toISOString(),
-            TransactionCurrency: newSO.currency,
-            to_Item: newSO.items.map((item) => ({
-              SalesOrderItem: item.itemId,
-              Material: item.materialId,
-              RequestedQuantity: item.quantity.toString(),
-              NetAmount: (
-                item.quantity * item.unitPrice
-              ).toString(),
-            })),
-          },
-        },
-        201,
-      );
-
-      pushTelemetry(
-        "SALES_ORDER_CREATED",
-        "SalesDistribution",
-        {
-          salesOrderId: newSO.salesOrderId,
-          customerCode: newSO.customerCode,
-          netValue: newSO.netValue,
-        },
-        odataDebuggerEnabled,
-      );
-    },
-    [pushODataLog, pushTelemetry, odataDebuggerEnabled],
-  );
-
-  /* ---------- updateWorkOrderStatus ---------------------------- */
-
-  const updateWorkOrderStatus = useCallback(
-    (workOrderId: string, status: WorkOrder["status"]) => {
-      const now = new Date();
-
-      setWorkOrders((prev) =>
-        prev.map((wo) => {
-          if (wo.workOrderId !== workOrderId) return wo;
-
-          const updates: Partial<WorkOrder> = { status };
-          if (
-            status === "IN_PROGRESS" &&
-            wo.actualStartDate === undefined
-          ) {
-            updates.actualStartDate = now;
+        prev.map((m) => {
+          if (m.materialId === materialId) {
+            oldQty = m.stockQuantity;
+            return {
+              ...m,
+              stockQuantity: newQuantity,
+              lastGoodsReceipt: newQuantity > oldQty ? new Date() : m.lastGoodsReceipt,
+              lastGoodsIssue: newQuantity < oldQty ? new Date() : m.lastGoodsIssue,
+            };
           }
-          if (
-            (status === "COMPLETED" || status === "CLOSED") &&
-            wo.actualEndDate === undefined
-          ) {
-            updates.actualEndDate = now;
-          }
-          return { ...wo, ...updates };
+          return m;
         }),
       );
 
-      const sapStatus =
-        status === "OPEN"
-          ? "I0001"
-          : status === "IN_PROGRESS"
-            ? "I0002"
-            : status === "COMPLETED"
-              ? "I0009"
-              : "I0046";
+      const delta = newQuantity - oldQty;
+      const sapPayload = {
+        Material: materialId,
+        StockQuantity: newQuantity,
+        Delta: delta,
+        Plant: "PLNT-DEL1",
+        StorageLocation: "SLoc-FG01",
+      };
 
+      const duration = randomDuration();
       pushODataLog(
         "PATCH",
-        `/sap/opu/odata4/sap/API_MAINTORDER/A_MaintenanceOrder('${workOrderId}')`,
-        {
-          d: {
-            MaintenanceOrder: workOrderId,
-            MaintOrdOperationStatusCode: sapStatus,
-            MaintenanceOrderStatusText: status,
-          },
-        },
-        200,
+        `/sap/opu/odata4/sap/API_MATERIAL_STOCK/A_MaterialStock('${materialId}')`,
+        sapPayload,
+        204,
+        duration,
       );
 
       pushTelemetry(
-        "WORK_ORDER_STATUS_CHANGED",
-        "PlantMaintenance",
-        { workOrderId, newStatus: status },
+        "STOCK_ADJUSTMENT",
+        "WarehouseAuditHub",
+        { materialId, oldQty, newQty: newQuantity, delta },
+        odataDebuggerEnabled,
+      );
+
+      // Trigger Push Notification if stock drops below reorder point
+      const matchedMaterial = materials.find(m => m.materialId === materialId);
+      if (matchedMaterial && newQuantity < matchedMaterial.reorderPoint) {
+        sendPushAlert(
+          "Low Stock Warning",
+          `Material ${materialId} (${matchedMaterial.description}) has fallen below reorder point. Current stock: ${newQuantity}`
+        );
+      }
+    },
+    [pushODataLog, pushTelemetry, odataDebuggerEnabled, materials],
+  );
+
+  const createWorkOrder = useCallback(
+    (fields: Partial<WorkOrder>) => {
+      const generatedId = `WO-${Math.floor(1000 + Math.random() * 9000)}`;
+      const newWO: WorkOrder = {
+        workOrderId: generatedId,
+        description: fields.description || "Unscheduled Maintenance Work Order",
+        functionalLocation: fields.functionalLocation || "PLNT-GEN-LOC",
+        equipmentId: fields.equipmentId || "EQ-GEN-01",
+        priority: fields.priority || "MEDIUM",
+        status: "OPEN",
+        orderType: fields.orderType || "PM01",
+        maintenanceActivityType: fields.maintenanceActivityType || "001",
+        plannedStartDate: fields.plannedStartDate || new Date(),
+        plannedEndDate: fields.plannedEndDate || new Date(Date.now() + 86400000),
+        responsiblePerson: fields.responsiblePerson || "Maintenance Team",
+        estimatedCost: fields.estimatedCost || 500,
+        functionalCodes: fields.functionalCodes || [],
+        notes: fields.notes || "",
+      };
+
+      setWorkOrders((prev) => [newWO, ...prev]);
+
+      const duration = randomDuration();
+      pushODataLog(
+        "POST",
+        `/sap/opu/odata4/sap/API_MAINTORDER/A_MaintenanceOrder`,
+        newWO,
+        201,
+        duration,
+      );
+
+      pushTelemetry(
+        "WORK_ORDER_CREATION",
+        "MaintenanceHub",
+        { workOrderId: generatedId, priority: newWO.priority, cost: newWO.estimatedCost },
+        odataDebuggerEnabled,
+      );
+
+      sendPushAlert(
+        "New Work Order Created",
+        `Maintenance task ${generatedId} (${newWO.description}) has been created with priority ${newWO.priority}.`
+      );
+    },
+    [pushODataLog, pushTelemetry, odataDebuggerEnabled],
+  );
+
+  const createSalesOrder = useCallback(
+    (fields: Partial<SalesOrder>) => {
+      const generatedId = `SO-${Math.floor(10000 + Math.random() * 90000)}`;
+      const newSO: SalesOrder = {
+        salesOrderId: generatedId,
+        customerName: fields.customerName || "Enterprise Customer",
+        customerCode: fields.customerCode || "CUST-GEN01",
+        orderDate: fields.orderDate || new Date(),
+        deliveryDate: fields.deliveryDate || new Date(Date.now() + 86400000 * 5),
+        netValue: fields.netValue || 0,
+        currency: fields.currency || "USD",
+        status: "PENDING",
+        items: fields.items || [],
+        salesOrg: fields.salesOrg || "1000",
+        distributionChannel: fields.distributionChannel || "10",
+      };
+
+      setSalesOrders((prev) => [newSO, ...prev]);
+
+      const duration = randomDuration();
+      pushODataLog(
+        "POST",
+        `/sap/opu/odata4/sap/API_SALES_ORDER/A_SalesOrder`,
+        newSO,
+        201,
+        duration,
+      );
+
+      pushTelemetry(
+        "SALES_ORDER_CREATION",
+        "AnalyticsHub",
+        { salesOrderId: generatedId, value: newSO.netValue, customer: newSO.customerName },
         odataDebuggerEnabled,
       );
     },
     [pushODataLog, pushTelemetry, odataDebuggerEnabled],
   );
 
-  /* ---------- toggleODataDebugger ------------------------------ */
+  const updateWorkOrderStatus = useCallback(
+    (workOrderId: string, status: WorkOrder["status"]) => {
+      setWorkOrders((prev) =>
+        prev.map((wo) => {
+          if (wo.workOrderId === workOrderId) {
+            const updates: Partial<WorkOrder> = { status };
+            if (status === "IN_PROGRESS") {
+              updates.actualStartDate = new Date();
+            } else if (status === "COMPLETED" || status === "CLOSED") {
+              updates.actualEndDate = new Date();
+            }
+            return { ...wo, ...updates };
+          }
+          return wo;
+        }),
+      );
+
+      const sapPayload = {
+        WorkOrder: workOrderId,
+        Status: status,
+        SystemStatusText: status,
+      };
+
+      const duration = randomDuration();
+      pushODataLog(
+        "PATCH",
+        `/sap/opu/odata4/sap/API_MAINTORDER/A_MaintenanceOrder('${workOrderId}')`,
+        sapPayload,
+        204,
+        duration,
+      );
+
+      pushTelemetry(
+        "WORK_ORDER_STATUS_UPDATE",
+        "MaintenanceHub",
+        { workOrderId, status },
+        odataDebuggerEnabled,
+      );
+    },
+    [pushODataLog, pushTelemetry, odataDebuggerEnabled],
+  );
 
   const toggleODataDebugger = useCallback(() => {
     setOdataDebuggerEnabled((prev) => !prev);
   }, []);
-
-  /* ---------- emitTelemetry ------------------------------------ */
 
   const emitTelemetry = useCallback(
     (
@@ -1118,8 +1119,6 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
     },
     [pushTelemetry, odataDebuggerEnabled],
   );
-
-  /* ---------- searchAll ---------------------------------------- */
 
   const searchAll = useCallback(
     (query: string): SearchResults => {
@@ -1183,8 +1182,6 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
     [materials, workOrders, salesOrders],
   );
 
-  /* ---------- metrics (useMemo) -------------------------------- */
-
   const metrics: SapMetrics = useMemo(() => {
     const totalStock = materials.reduce(
       (sum, m) => sum + m.stockQuantity,
@@ -1235,6 +1232,457 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
     };
   }, [materials, workOrders, salesOrders]);
 
+  /* ================================================================
+     6. Multi-tenant Live Database Actions & Loaders
+     ================================================================ */
+
+  // Load complete live multi-tenant sets from database
+  const loadLiveDbData = useCallback(async () => {
+    try {
+      setDbLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setUserProfile(null);
+        setDbLoading(false);
+        return;
+      }
+
+      const userId = session.user.id;
+
+      // 1. Fetch user profile
+      const { data: profile, error: profileErr } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
+
+      if (profileErr || !profile) {
+        // Self-heal profile auto-provisioning
+        const userEmail = session.user.email || "";
+        console.log("No profile record found. Provisioning profile for user:", userEmail);
+        
+        // Fetch or create default company
+        let compId = "";
+        const { data: compList } = await supabase.from("companies").select("*").limit(1);
+        if (compList && compList.length > 0) {
+          compId = compList[0].id;
+        } else {
+          const { data: newComp, error: newCompErr } = await supabase
+            .from("companies")
+            .insert({ name: "ApexOps Global Headquarters" })
+            .select()
+            .single();
+          if (newCompErr) throw newCompErr;
+          compId = newComp.id;
+        }
+
+        // Determine role: ends with corporate domain or contains "admin" => admin / employee
+        let assignedRole: "admin" | "employee" | "client" = "employee";
+        if (userEmail.toLowerCase().includes("admin") || userEmail.toLowerCase().includes("owner")) {
+          assignedRole = "admin";
+        } else if (session.user.user_metadata?.role === "client") {
+          assignedRole = "client";
+        }
+
+        const { data: provProfile, error: provErr } = await supabase
+          .from("profiles")
+          .insert({
+            id: userId,
+            company_id: compId,
+            role: assignedRole,
+            email: userEmail,
+            full_name: session.user.user_metadata?.full_name || userEmail.split("@")[0]
+          })
+          .select()
+          .single();
+
+        if (provErr) throw provErr;
+        setUserProfile(provProfile);
+      } else {
+        setUserProfile(profile);
+      }
+    } catch (error) {
+      console.error("Error loading live user session / profile setup:", error);
+    } finally {
+      setDbLoading(false);
+    }
+  }, []);
+
+  // Fetch live tables based on profile scope
+  useEffect(() => {
+    if (!userProfile) {
+      setProjects([]);
+      setEmployees([]);
+      setAssignments([]);
+      setTickets([]);
+      setEmails([]);
+      setNotifications([]);
+      return;
+    }
+
+    const fetchCompanyAndModules = async () => {
+      try {
+        // Get company details
+        const { data: comp } = await supabase
+          .from("companies")
+          .select("name")
+          .eq("id", userProfile.company_id)
+          .single();
+        if (comp) setCompanyName(comp.name);
+
+        // Fetch notifications
+        const { data: notify } = await supabase
+          .from("notifications")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (notify) setNotifications(notify);
+
+        // Fetch projects based on role
+        const { data: projList } = await supabase
+          .from("projects")
+          .select("*")
+          .order("created_at", { ascending: false });
+        
+        if (projList) {
+          setProjects(projList);
+          
+          // Fetch feature flags for all loaded projects
+          const projIds = projList.map(p => p.id);
+          if (projIds.length > 0) {
+            const { data: flags } = await supabase
+              .from("feature_flags")
+              .select("*")
+              .in("project_id", projIds);
+            
+            if (flags) {
+              const flagsMap: Record<string, boolean> = {};
+              flags.forEach(f => {
+                flagsMap[f.project_id] = f.apex_joule_enabled;
+              });
+              setFeatureFlags(flagsMap);
+            }
+          }
+        }
+
+        // Fetch tickets
+        const { data: tix } = await supabase
+          .from("help_tickets")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (tix) setTickets(tix);
+
+        // Fetch assignments
+        const { data: assign } = await supabase
+          .from("project_assignments")
+          .select("*");
+        if (assign) setAssignments(assign);
+
+        // Admins can fetch all profiles (employees) and transactional emails
+        if (userProfile.role === "admin") {
+          const { data: profileList } = await supabase
+            .from("profiles")
+            .select("*");
+          if (profileList) {
+            setEmployees(profileList.filter(p => p.role === "employee" || p.role === "admin"));
+          }
+
+          const { data: emailLogs } = await supabase
+            .from("transactional_emails")
+            .select("*")
+            .order("sent_at", { ascending: false });
+          if (emailLogs) setEmails(emailLogs);
+        } else if (userProfile.role === "employee") {
+          // Employees can fetch the list of profiles in company
+          const { data: profileList } = await supabase
+            .from("profiles")
+            .select("*");
+          if (profileList) {
+            setEmployees(profileList.filter(p => p.role === "employee" || p.role === "admin"));
+          }
+        }
+      } catch (err) {
+        console.error("Error loading multi-tenant data sets:", err);
+      }
+    };
+
+    fetchCompanyAndModules();
+
+    // Listen to real-time project updates, notifications, and assignments
+    const channel = supabase
+      .channel("live-db-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "projects" }, () => fetchCompanyAndModules())
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => fetchCompanyAndModules())
+      .on("postgres_changes", { event: "*", schema: "public", table: "project_assignments" }, () => fetchCompanyAndModules())
+      .on("postgres_changes", { event: "*", schema: "public", table: "help_tickets" }, () => fetchCompanyAndModules())
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => fetchCompanyAndModules())
+      .on("postgres_changes", { event: "*", schema: "public", table: "feature_flags" }, () => fetchCompanyAndModules())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userProfile]);
+
+  // Handle auth session state loading
+  useEffect(() => {
+    loadLiveDbData();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      loadLiveDbData();
+    });
+    return () => subscription.unsubscribe();
+  }, [loadLiveDbData]);
+
+  // Project Actions
+  const createProject = useCallback(async (name: string, clientEmail: string): Promise<Project> => {
+    if (!userProfile || userProfile.role !== "admin") {
+      throw new Error("Only Administrators can perform project creation workflows.");
+    }
+
+    const uniqueId = `APEX-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // Create the project in the table
+    const { data: project, error: insertError } = await supabase
+      .from("projects")
+      .insert({
+        company_id: userProfile.company_id,
+        name,
+        unique_project_id: uniqueId,
+        status: "active",
+        client_email: clientEmail
+      })
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    // Create default feature flags for the project
+    await supabase.from("feature_flags").insert({
+      project_id: project.id,
+      apex_joule_enabled: false // Off by default
+    });
+
+    // Fire client onboarding handshake Edge Function asynchronously
+    try {
+      const secureToken = "apexops-db-execute-token-2026-06-05";
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/client-handshake`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-secure-token": secureToken
+        },
+        body: JSON.stringify({
+          email: clientEmail,
+          project_id: uniqueId,
+          name: clientEmail.split("@")[0],
+          company_id: userProfile.company_id
+        })
+      });
+
+      sendPushAlert("Project Established", `Project ${name} (${uniqueId}) created. Welcome details dispatched to client.`);
+    } catch (e) {
+      console.error("Onboarding dispatch failed:", e);
+    }
+
+    return project;
+  }, [userProfile]);
+
+  const renameProject = useCallback(async (id: string, name: string): Promise<void> => {
+    if (!userProfile || userProfile.role !== "admin") {
+      throw new Error("Only Administrators can manage project entities.");
+    }
+
+    const { error } = await supabase
+      .from("projects")
+      .update({ name })
+      .eq("id", id);
+
+    if (error) throw error;
+
+    sendPushAlert("Project Parameters Modified", `Project description renamed to: ${name}.`);
+  }, [userProfile]);
+
+  // Employee Assignment & Limit Check (Trigger and context check)
+  const assignEmployee = useCallback(async (projectId: string, employeeId: string): Promise<void> => {
+    if (!userProfile || userProfile.role !== "admin") {
+      throw new Error("Only Administrators can assign employees to workspaces.");
+    }
+
+    // 1. Perform assignment limit check locally for direct UX response
+    const activeAssignments = assignments.filter(a => a.employee_id === employeeId);
+    const activeProjectsCount = activeAssignments.filter(a => {
+      const proj = projects.find(p => p.id === a.project_id);
+      return proj && proj.status === "active";
+    }).length;
+
+    if (activeProjectsCount >= 3) {
+      throw new Error("Employee cannot be assigned. Enforced limit is a maximum of 3 active project allocations.");
+    }
+
+    // 2. Perform database insert (triggers enforce_employee_project_limit on remote DB)
+    const { error: dbError } = await supabase
+      .from("project_assignments")
+      .insert({
+        project_id: projectId,
+        employee_id: employeeId
+      });
+
+    if (dbError) {
+      throw new Error(dbError.message || "Failed to establish employee assignment mapping.");
+    }
+
+    // 3. Dispatch transactional notification email
+    try {
+      const assignedProj = projects.find(p => p.id === projectId);
+      const assignedEmp = employees.find(e => e.id === employeeId) || { email: "employee@apexops.com" };
+      const emailBody = `Attention: You have been assigned to Project: ${assignedProj?.name || "Active ERP Module"}.
+
+Please login to your ApexOps corporate workspace to review project requirements and collaboration channels.`;
+
+      await supabase.from("transactional_emails").insert({
+        recipient: assignedEmp.email,
+        subject: "Notification: Project Allocation Confirmed",
+        body: emailBody
+      });
+
+      // Insert notification
+      await supabase.from("notifications").insert({
+        user_id: employeeId,
+        title: "New Project Assignment",
+        message: `You have been allocated to project: ${assignedProj?.name || "Active Module"}.`
+      });
+
+      sendPushAlert("Work Allocation Registered", `Employee allocated to project. Task dispatch notification sent.`);
+    } catch (e) {
+      console.error("Assignment dispatch error:", e);
+    }
+  }, [userProfile, assignments, projects, employees]);
+
+  const removeEmployee = useCallback(async (projectId: string, employeeId: string): Promise<void> => {
+    if (!userProfile || userProfile.role !== "admin") {
+      throw new Error("Only Administrators can remove employee assignments.");
+    }
+
+    const { error } = await supabase
+      .from("project_assignments")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("employee_id", employeeId);
+
+    if (error) throw error;
+
+    sendPushAlert("Work Allocation Revoked", `Employee assignment removed from project.`);
+  }, [userProfile]);
+
+  const toggleApexJoule = useCallback(async (projectId: string, enabled: boolean): Promise<void> => {
+    if (!userProfile || userProfile.role !== "admin") {
+      throw new Error("Only Administrators can configure client custom add-ons.");
+    }
+
+    const { error } = await supabase
+      .from("feature_flags")
+      .upsert({
+        project_id: projectId,
+        apex_joule_enabled: enabled,
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) throw error;
+
+    sendPushAlert("Add-On Access Modified", `ApexJoule AI permissions ${enabled ? "granted" : "revoked"} for project.`);
+  }, [userProfile]);
+
+  const isJouleEnabledForProject = useCallback((projectId: string): boolean => {
+    return !!featureFlags[projectId];
+  }, [featureFlags]);
+
+  // Support Ticketing Actions
+  const createHelpTicket = useCallback(async (projectId: string, subject: string, description: string): Promise<void> => {
+    if (!userProfile) throw new Error("Authenticated session is required to file support tickets.");
+
+    const { error } = await supabase
+      .from("help_tickets")
+      .insert({
+        project_id: projectId,
+        client_id: userProfile.id,
+        subject,
+        description,
+        status: "open"
+      });
+
+    if (error) throw error;
+
+    // Send notification to assigned employees
+    try {
+      const assignedEmps = assignments.filter(a => a.project_id === projectId);
+      for (const assignment of assignedEmps) {
+        await supabase.from("notifications").insert({
+          user_id: assignment.employee_id,
+          title: "New Help Ticket Filed",
+          message: `Ticket filed on assigned project: "${subject}".`
+        });
+      }
+      sendPushAlert("Help Ticket Dispatched", `Support ticket registered. Assigned employees have been notified.`);
+    } catch (e) {
+      console.error("Ticket alert dispatch failed:", e);
+    }
+  }, [userProfile, assignments]);
+
+  const updateTicketStatus = useCallback(async (ticketId: string, status: HelpTicket["status"]): Promise<void> => {
+    if (!userProfile || userProfile.role === "client") {
+      throw new Error("Only Admins and Employees can resolve help tickets.");
+    }
+
+    const { error } = await supabase
+      .from("help_tickets")
+      .update({ status })
+      .eq("id", ticketId);
+
+    if (error) throw error;
+
+    // Notify the client
+    try {
+      const ticket = tickets.find(t => t.id === ticketId);
+      if (ticket) {
+        await supabase.from("notifications").insert({
+          user_id: ticket.client_id,
+          title: "Ticket Status Updated",
+          message: `Your help ticket "${ticket.subject}" has been marked as ${status}.`
+        });
+      }
+    } catch (e) {
+      console.error("Ticket status notification failed:", e);
+    }
+  }, [userProfile, tickets]);
+
+  const markNotificationRead = useCallback(async (id: string): Promise<void> => {
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", id);
+  }, []);
+
+  // System Push Alerts (In-app alerts + browser Push notifications API)
+  const sendPushAlert = (title: string, message: string) => {
+    // 1. Trigger browser Push notifications
+    if (Notification.permission === "granted") {
+      new Notification(title, {
+        body: message,
+        icon: "/favicon.ico"
+      });
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then(permission => {
+        if (permission === "granted") {
+          new Notification(title, {
+            body: message
+          });
+        }
+      });
+    }
+
+    // 2. Broadcast on global console stream (OData / Telemetry)
+    pushTelemetry("PUSH_ALERT_DISPATCH", "SystemNotificationEngine", { title, message }, odataDebuggerEnabled);
+  };
+
   /* ---------- context value ------------------------------------ */
 
   const value: SapContextType = useMemo(
@@ -1253,6 +1701,30 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
       toggleODataDebugger,
       emitTelemetry,
       searchAll,
+
+      // Multi-tenant live states
+      userProfile,
+      projects,
+      employees,
+      assignments,
+      tickets,
+      emails,
+      notifications,
+      companyName,
+      dbLoading,
+      featureFlags,
+
+      // Multi-tenant actions
+      createProject,
+      renameProject,
+      assignEmployee,
+      removeEmployee,
+      toggleApexJoule,
+      createHelpTicket,
+      updateTicketStatus,
+      markNotificationRead,
+      loadLiveDbData,
+      isJouleEnabledForProject,
     }),
     [
       materials,
@@ -1269,6 +1741,28 @@ export const SapProvider: React.FC<{ children: ReactNode }> = ({
       toggleODataDebugger,
       emitTelemetry,
       searchAll,
+
+      userProfile,
+      projects,
+      employees,
+      assignments,
+      tickets,
+      emails,
+      notifications,
+      companyName,
+      dbLoading,
+      featureFlags,
+
+      createProject,
+      renameProject,
+      assignEmployee,
+      removeEmployee,
+      toggleApexJoule,
+      createHelpTicket,
+      updateTicketStatus,
+      markNotificationRead,
+      loadLiveDbData,
+      isJouleEnabledForProject,
     ],
   );
 
