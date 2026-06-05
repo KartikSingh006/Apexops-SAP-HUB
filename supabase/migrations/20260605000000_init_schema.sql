@@ -153,7 +153,7 @@ CREATE POLICY select_profile ON profiles
 DROP POLICY IF EXISTS insert_profile ON profiles;
 CREATE POLICY insert_profile ON profiles
     FOR INSERT WITH CHECK (
-        auth.uid() IS NOT NULL
+        true
     );
 
 -- STATEMENT

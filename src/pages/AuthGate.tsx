@@ -81,6 +81,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
       }
 
       // 2. Programmatically insert a new row into the companies table
+      console.log('Admin Register: Inserting company name:', companyName.trim());
       const { data: companyData, error: companyError } = await supabase
         .from('companies')
         .insert({ name: companyName.trim() })
@@ -88,9 +89,11 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
         .single();
 
       if (companyError) {
+        console.error('Admin Register: Company insertion failed:', companyError);
         throw new Error(`Failed to initialize company: ${companyError.message}`);
       }
 
+      console.log('Admin Register: Inserting profile for user:', user.id, 'company:', companyData.id);
       // 3. Subsequently insert a row into the profiles table mapping user's UUID to the role 'admin'
       const { error: profileError } = await supabase
         .from('profiles')
@@ -103,6 +106,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
         });
 
       if (profileError) {
+        console.error('Admin Register: Profile insertion failed:', profileError);
         throw new Error(`Failed to create admin profile: ${profileError.message}`);
       }
 
