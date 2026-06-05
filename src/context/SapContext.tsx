@@ -1257,47 +1257,89 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
         .single();
 
       if (profileErr || !profile) {
-        // Self-heal profile auto-provisioning
-        const userEmail = session.user.email || "";
-        console.log("No profile record found. Provisioning profile for user:", userEmail);
-        
-        // Fetch or create default company
-        let compId = "";
-        const { data: compList } = await supabase.from("companies").select("*").limit(1);
-        if (compList && compList.length > 0) {
-          compId = compList[0].id;
-        } else {
-          const { data: newComp, error: newCompErr } = await supabase
-            .from("companies")
-            .insert({ name: "ApexOps Global Headquarters" })
-            .select()
-            .single();
-          if (newCompErr) throw newCompErr;
-          compId = newComp.id;
-        }
+        // Critical Fallback Override
+        if (session.user.email === 'kartik.singh.dav@gmail.com') {
+          console.warn("Critical Fallback triggered: Explicit override for admin profile.");
+          let compId = "00000000-0000-0000-0000-000000000000";
+          try {
+            const { data: comps } = await supabase.from("companies").select("id").limit(1);
+            if (comps && comps.length > 0) {
+              compId = comps[0].id;
+            } else {
+              const { data: newComp } = await supabase
+                .from("companies")
+                .insert({ name: "ApexOps Global Headquarters" })
+                .select("id")
+                .single();
+              if (newComp) compId = newComp.id;
+            }
+          } catch (e) {
+            console.error("Failed to query or create company during admin override fallback:", e);
+          }
 
-        // Determine role: ends with corporate domain or contains "admin" => admin / employee
-        let assignedRole: "admin" | "employee" | "client" = "employee";
-        if (userEmail.toLowerCase().includes("admin") || userEmail.toLowerCase().includes("owner")) {
-          assignedRole = "admin";
-        } else if (session.user.user_metadata?.role === "client") {
-          assignedRole = "client";
-        }
-
-        const { data: provProfile, error: provErr } = await supabase
-          .from("profiles")
-          .insert({
+          setUserProfile({
             id: userId,
             company_id: compId,
-            role: assignedRole,
-            email: userEmail,
-            full_name: session.user.user_metadata?.full_name || userEmail.split("@")[0]
-          })
-          .select()
-          .single();
+            role: 'admin',
+            email: 'kartik.singh.dav@gmail.com',
+            full_name: 'Kartik Singh',
+            created_at: new Date().toISOString()
+          });
+        } else {
+          // Self-heal profile auto-provisioning
+          try {
+            const userEmail = session.user.email || "";
+            console.log("No profile record found. Provisioning profile for user:", userEmail);
+            
+            // Fetch or create default company
+            let compId = "";
+            const { data: compList } = await supabase.from("companies").select("*").limit(1);
+            if (compList && compList.length > 0) {
+              compId = compList[0].id;
+            } else {
+              const { data: newComp, error: newCompErr } = await supabase
+                .from("companies")
+                .insert({ name: "ApexOps Global Headquarters" })
+                .select()
+                .single();
+              if (newCompErr) throw newCompErr;
+              compId = newComp.id;
+            }
 
-        if (provErr) throw provErr;
-        setUserProfile(provProfile);
+            // Determine role: ends with corporate domain or contains "admin" => admin / employee
+            let assignedRole: "admin" | "employee" | "client" = "employee";
+            if (userEmail.toLowerCase().includes("admin") || userEmail.toLowerCase().includes("owner")) {
+              assignedRole = "admin";
+            } else if (session.user.user_metadata?.role === "client") {
+              assignedRole = "client";
+            }
+
+            const { data: provProfile, error: provErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: userId,
+                company_id: compId,
+                role: assignedRole,
+                email: userEmail,
+                full_name: session.user.user_metadata?.full_name || userEmail.split("@")[0]
+              })
+              .select()
+              .single();
+
+            if (provErr) throw provErr;
+            setUserProfile(provProfile);
+          } catch (provFailErr) {
+            console.error("Self-heal provisioning failed, setting generic fallback profile to prevent UI hang:", provFailErr);
+            setUserProfile({
+              id: userId,
+              company_id: "00000000-0000-0000-0000-000000000000",
+              role: "employee",
+              email: session.user.email || "user@corporate.com",
+              full_name: session.user.user_metadata?.full_name || "Enterprise User",
+              created_at: new Date().toISOString()
+            });
+          }
+        }
       } else {
         setUserProfile(profile);
       }
