@@ -70,16 +70,31 @@ function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
 
   useEffect(() => {
+    // Initial session load only — reads the current tab's session state.
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession);
       setLoading(false);
     });
 
+    // Scope listener STRICTLY to SIGNED_IN and SIGNED_OUT.
+    // TOKEN_REFRESHED and INITIAL_SESSION events are intentionally ignored:
+    // they propagate across tabs via shared localStorage but do NOT represent
+    // a user action in THIS tab. Responding to them causes cross-tab state
+    // bleeding where logging in on tab B forces tab A's login page to convert.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setLoading(false);
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (event === 'SIGNED_IN') {
+        setSession(newSession);
+        setLoading(false);
+        setCurrentPage('dashboard'); // Always reset to dashboard on fresh login
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setCurrentPage('dashboard');
+        setLoading(false);
+      }
+      // All other events (TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED, etc.)
+      // are deliberately ignored to prevent inter-tab contamination.
     });
 
     return () => subscription.unsubscribe();

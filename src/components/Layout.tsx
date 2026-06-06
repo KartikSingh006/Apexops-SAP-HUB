@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect, FormEvent } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   LayoutDashboard,
   Warehouse,
@@ -16,23 +16,15 @@ import {
   Zap,
   Terminal,
   Building,
-  Mail,
-  PlusCircle,
-  Clock,
-  CheckCircle,
   HelpCircle,
   ToggleLeft,
   ToggleRight,
-  Loader2,
-  Trash2,
-  FileText,
   Shield,
   Sparkles,
-  Users,
   Briefcase,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useSap, HelpTicket, Project } from '@/context/SapContext';
+import { useSap } from '@/context/SapContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -65,7 +57,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
     toggleODataDebugger,
     odataDebuggerEnabled,
     
-    // Live multi-tenant states & actions
+    // Live multi-tenant states
     userProfile,
     projects,
     employees,
@@ -74,16 +66,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
     emails,
     notifications,
     companyName,
-    createProject,
-    renameProject,
-    assignEmployee,
-    removeEmployee,
-    toggleApexJoule,
-    createHelpTicket,
-    updateTicketStatus,
     markNotificationRead,
-    isJouleEnabledForProject,
-    featureFlags
   } = useSap();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -101,23 +84,6 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
   const [pushEnabled, setPushEnabled] = useState(true);
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [metricInterval, setMetricInterval] = useState('10'); // seconds
-
-  // Project forms state
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newClientEmail, setNewClientEmail] = useState('');
-  const [projLoading, setProjLoading] = useState(false);
-  const [projError, setProjError] = useState('');
-
-  // Ticket filing state
-  const [ticketSubject, setTicketSubject] = useState('');
-  const [ticketDesc, setTicketDesc] = useState('');
-  const [ticketLoading, setTicketLoading] = useState(false);
-  const [ticketError, setTicketError] = useState('');
-
-  // Employee assignment form state
-  const [assignProjectId, setAssignProjectId] = useState('');
-  const [assignEmployeeId, setAssignEmployeeId] = useState('');
-  const [assignError, setAssignError] = useState('');
 
   // Dynamic badge counts
   const lowStockCount = useMemo(() => {
@@ -289,64 +255,10 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
     [onNavigate]
   );
 
+  // Notification unread count
   const unreadNotifications = useMemo(() => {
     return notifications.filter(n => !n.read);
   }, [notifications]);
-
-  // Project forms actions
-  const handleCreateProjectSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!newProjectName.trim() || !newClientEmail.trim()) return;
-    setProjLoading(true);
-    setProjError('');
-    try {
-      await createProject(newProjectName.trim(), newClientEmail.trim());
-      setNewProjectName('');
-      setNewClientEmail('');
-    } catch (err: any) {
-      setProjError(err?.message ?? 'Failed to establish project entry.');
-    } finally {
-      setProjLoading(false);
-    }
-  };
-
-  const handleAssignEmployeeSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!assignProjectId || !assignEmployeeId) return;
-    setAssignError('');
-    try {
-      await assignEmployee(assignProjectId, assignEmployeeId);
-      setAssignProjectId('');
-      setAssignEmployeeId('');
-    } catch (err: any) {
-      setAssignError(err?.message ?? 'Failed to create employee project mapping.');
-    }
-  };
-
-  // Ticket filing action
-  const handleFileTicketSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!ticketSubject.trim() || !ticketDesc.trim()) return;
-    
-    // Find client's project
-    const clientProj = projects.find(p => p.client_email === userProfile?.email);
-    if (!clientProj) {
-      setTicketError('Client project mapping missing. Contact admin.');
-      return;
-    }
-
-    setTicketLoading(true);
-    setTicketError('');
-    try {
-      await createHelpTicket(clientProj.id, ticketSubject.trim(), ticketDesc.trim());
-      setTicketSubject('');
-      setTicketDesc('');
-    } catch (err: any) {
-      setTicketError(err?.message ?? 'Failed to file support ticket.');
-    } finally {
-      setTicketLoading(false);
-    }
-  };
 
   const getResultIcon = (type: string) => {
     switch (type) {
@@ -365,24 +277,6 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
     }
   };
 
-  // Client assigned employees list lookup
-  const clientAssignedEmployees = useMemo(() => {
-    if (userProfile?.role !== 'client') return [];
-    const clientProj = projects.find(p => p.client_email === userProfile.email);
-    if (!clientProj) return [];
-
-    const projAssigns = assignments.filter(a => a.project_id === clientProj.id);
-    // Find matching employee profiles
-    // In standard Supabase context we might load profiles or show default, let's look up matching employees
-    return employees.filter(emp => projAssigns.some(a => a.employee_id === emp.id));
-  }, [userProfile, projects, assignments, employees]);
-
-  // Employee assigned projects list lookup
-  const employeeAssignedProjects = useMemo(() => {
-    if (userProfile?.role !== 'employee') return [];
-    const empAssigns = assignments.filter(a => a.employee_id === userProfile.id);
-    return projects.filter(p => empAssigns.some(a => a.project_id === p.id));
-  }, [userProfile, assignments, projects]);
 
   return (
     <div className="relative min-h-screen bg-slate-50 text-slate-800 flex flex-col md:flex-row">
@@ -818,16 +712,20 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
                 </div>
               </div>
 
-              {/* ──────────────── ADMIN SCOPE VIEW ──────────────── */}
+              {/* Profile provides a read-only identity overview.
+                  All role-specific actions (project creation, allocation, ticketing)
+                  are exclusively accessible within the dedicated role dashboards:
+                  AdminDashboard, EmployeeDashboard, and ClientDashboard. */}
+
+              {/* ──────────────── ADMIN SCOPE: Read-only overview ──────────────── */}
               {userProfile.role === 'admin' && (
-                <div className="space-y-6">
+                <div className="space-y-5">
                   <div className="border-t border-slate-150 pt-5">
                     <h4 className="text-sm font-bold text-slate-800 mb-3.5 flex items-center gap-1.5">
                       <Building className="w-4 h-4 text-sap-600" />
-                      Global Administrative Overview
+                      Administrative Account Overview
                     </h4>
-                    
-                    <div className="grid grid-cols-4 gap-4 mb-5">
+                    <div className="grid grid-cols-4 gap-4">
                       <div className="p-3 bg-indigo-50/40 rounded-xl border border-indigo-100 text-center">
                         <span className="text-lg font-black text-indigo-700">{projects.length}</span>
                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block mt-1">Projects</span>
@@ -842,254 +740,70 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onNavigate }) =>
                       </div>
                       <div className="p-3 bg-sky-50/40 rounded-xl border border-sky-100 text-center">
                         <span className="text-lg font-black text-sky-700">{emails.length}</span>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block mt-1">Emails Log</span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block mt-1">Emails</span>
                       </div>
                     </div>
-                  </div>
-
-                  {/* Add New Project Section */}
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <PlusCircle className="w-4 h-4 text-sap-600" />
-                      Establish Project & Onboard Client
-                    </h4>
-                    {projError && <p className="text-xs text-red-500 mb-2">{projError}</p>}
-                    <form onSubmit={handleCreateProjectSubmit} className="grid md:grid-cols-3 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Project Name"
-                        value={newProjectName}
-                        onChange={(e) => setNewProjectName(e.target.value)}
-                        required
-                        className="text-xs px-3.5 py-2 border border-slate-200 bg-slate-50 rounded-xl focus:border-sap-500 focus:outline-none"
-                      />
-                      <input
-                        type="email"
-                        placeholder="Client Email Address"
-                        value={newClientEmail}
-                        onChange={(e) => setNewClientEmail(e.target.value)}
-                        required
-                        className="text-xs px-3.5 py-2 border border-slate-200 bg-slate-50 rounded-xl focus:border-sap-500 focus:outline-none"
-                      />
-                      <button
-                        type="submit"
-                        disabled={projLoading}
-                        className="py-2 px-4 text-xs font-bold bg-sap-600 text-white rounded-xl hover:bg-sap-500 transition-colors disabled:opacity-55"
-                      >
-                        {projLoading ? 'Provisioning...' : 'Deploy Project'}
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Employee Allocations Panel */}
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-indigo-600" />
-                      Allocate Employees to Workspaces (Max 3 Projects)
-                    </h4>
-                    {assignError && <p className="text-xs text-red-500 mb-2">{assignError}</p>}
-                    <form onSubmit={handleAssignEmployeeSubmit} className="grid md:grid-cols-3 gap-3">
-                      <select
-                        value={assignProjectId}
-                        onChange={(e) => setAssignProjectId(e.target.value)}
-                        required
-                        className="text-xs px-3.5 py-2 border border-slate-200 bg-slate-50 rounded-xl focus:border-sap-500 focus:outline-none"
-                      >
-                        <option value="">Select Project</option>
-                        {projects.map(p => (
-                          <option key={p.id} value={p.id}>{p.name} ({p.unique_project_id})</option>
-                        ))}
-                      </select>
-                      <select
-                        value={assignEmployeeId}
-                        onChange={(e) => setAssignEmployeeId(e.target.value)}
-                        required
-                        className="text-xs px-3.5 py-2 border border-slate-200 bg-slate-50 rounded-xl focus:border-sap-500 focus:outline-none"
-                      >
-                        <option value="">Select Employee</option>
-                        {employees.map(emp => (
-                          <option key={emp.id} value={emp.id}>{emp.full_name || emp.email}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="submit"
-                        className="py-2 px-4 text-xs font-bold bg-indigo-600 text-white rounded-xl hover:bg-indigo-500 transition-colors"
-                      >
-                        Create Assignment
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Add-On Gatekeeper System: Toggle permissions per project */}
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      Granular Feature Toggle: ApexJoule Assistant Add-On
-                    </h4>
-                    <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
-                      {projects.length === 0 ? (
-                        <p className="text-xs text-slate-400 py-2">No active projects found.</p>
-                      ) : (
-                        projects.map(proj => {
-                          const isJouleEnabled = isJouleEnabledForProject(proj.id);
-                          return (
-                            <div key={proj.id} className="flex items-center justify-between py-2">
-                              <div>
-                                <p className="text-xs font-bold text-slate-700">{proj.name}</p>
-                                <p className="text-[10px] text-slate-400">ID: {proj.unique_project_id} · Client: {proj.client_email}</p>
-                              </div>
-                              <button
-                                onClick={() => toggleApexJoule(proj.id, !isJouleEnabled)}
-                                className="flex items-center gap-1.5 text-xs font-semibold text-sap-600 hover:text-sap-800"
-                              >
-                                {isJouleEnabled ? (
-                                  <>
-                                    <span className="text-[10px] font-bold text-emerald-600 uppercase">ADD-ON ACTIVE</span>
-                                    <ToggleRight className="w-7 h-7 text-emerald-600" />
-                                  </>
-                                ) : (
-                                  <>
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase">INACTIVE</span>
-                                    <ToggleLeft className="w-7 h-7 text-slate-300" />
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
+                    <p className="text-xs text-slate-400 mt-3 text-center">
+                      To manage projects and allocations, navigate to the <strong className="text-sap-600">Analytics Hub</strong> dashboard.
+                    </p>
                   </div>
                 </div>
               )}
 
-              {/* ──────────────── EMPLOYEE SCOPE VIEW ──────────────── */}
+              {/* ──────────────── EMPLOYEE SCOPE: Read-only overview ──────────────── */}
               {userProfile.role === 'employee' && (
-                <div className="space-y-5">
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <Briefcase className="w-4 h-4 text-indigo-600" />
-                      Assigned Projects Dashboard (Maximum 3 Active Allocations)
-                    </h4>
-
-                    {employeeAssignedProjects.length === 0 ? (
-                      <p className="text-xs text-slate-400 bg-slate-50 border p-4 rounded-xl text-center">
-                        No active project allocations mapped to this specialist.
-                      </p>
-                    ) : (
-                      <div className="grid md:grid-cols-2 gap-4">
-                        {employeeAssignedProjects.map(proj => {
-                          const clientTickets = tickets.filter(t => t.project_id === proj.id);
-                          return (
-                            <div key={proj.id} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
-                              <span className="text-[9px] font-black bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
-                                ID: {proj.unique_project_id}
-                              </span>
-                              <h5 className="font-bold text-slate-800 text-sm mt-2">{proj.name}</h5>
-                              <p className="text-xs text-slate-500 mt-1">Client: {proj.client_email}</p>
-                              
-                              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                                <span>Status: <strong className="text-indigo-600 uppercase">{proj.status}</strong></span>
-                                <span>Tickets: {clientTickets.length}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                <div className="border-t border-slate-150 pt-5">
+                  <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
+                    <Briefcase className="w-4 h-4 text-indigo-600" />
+                    Employee Profile Status
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 bg-indigo-50/40 rounded-xl border border-indigo-100 text-center">
+                      <span className="text-lg font-black text-indigo-700">
+                        {assignments.filter(a => a.employee_id === userProfile.id).length}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block mt-1">Active Allocations</span>
+                    </div>
+                    <div className="p-3 bg-amber-50/40 rounded-xl border border-amber-100 text-center">
+                      <span className="text-lg font-black text-amber-700">
+                        {tickets.filter(t => {
+                          const myProjectIds = assignments.filter(a => a.employee_id === userProfile.id).map(a => a.project_id);
+                          return myProjectIds.includes(t.project_id) && t.status !== 'resolved';
+                        }).length}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block mt-1">Open Tickets</span>
+                    </div>
                   </div>
+                  <p className="text-xs text-slate-400 mt-3 text-center">
+                    View your full workspace in the <strong className="text-indigo-600">Employee Operations Center</strong>.
+                  </p>
                 </div>
               )}
 
-              {/* ──────────────── CLIENT SCOPE VIEW ──────────────── */}
+              {/* ──────────────── CLIENT SCOPE: Read-only project view ──────────────── */}
               {userProfile.role === 'client' && (
-                <div className="space-y-6">
-                  {/* Project overview parameters */}
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <Building className="w-4 h-4 text-sap-600" />
-                      B2B Collaboration Workspace Details
-                    </h4>
-                    {projects.filter(p => p.client_email === userProfile.email).map(proj => (
-                      <div key={proj.id} className="p-4 bg-sap-50/50 border border-sap-200 rounded-2xl">
-                        <div className="flex justify-between items-center">
-                          <h5 className="font-bold text-slate-800 text-base">{proj.name}</h5>
-                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-sap-600 text-white">
-                            ID: {proj.unique_project_id}
-                          </span>
-                        </div>
-                        <div className="mt-3.5 grid grid-cols-2 gap-3 text-xs text-slate-600 font-semibold">
-                          <p>Project Status: <strong className="text-sap-700 uppercase">{proj.status}</strong></p>
-                          <p>Created Date: {new Date(proj.created_at).toLocaleDateString()}</p>
-                        </div>
+                <div className="border-t border-slate-150 pt-5">
+                  <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
+                    <Building className="w-4 h-4 text-sap-600" />
+                    Client Project Summary
+                  </h4>
+                  {projects.filter(p => p.client_email === userProfile.email).map(proj => (
+                    <div key={proj.id} className="p-4 bg-sap-50/50 border border-sap-200 rounded-2xl">
+                      <div className="flex justify-between items-center">
+                        <h5 className="font-bold text-slate-800 text-base">{proj.name}</h5>
+                        <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-sap-600 text-white">
+                          ID: {proj.unique_project_id}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Help Tickets list & filing */}
-                  <div className="border-t border-slate-150 pt-5">
-                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-                      <HelpCircle className="w-4 h-4 text-emerald-600" />
-                      Support Center & Assistance Tickets
-                    </h4>
-
-                    {/* Create Help Ticket Form */}
-                    <div className="bg-slate-50/50 border border-slate-200 rounded-2xl p-4 mb-4">
-                      <h5 className="text-xs font-bold text-slate-700 mb-3">Submit Help Ticket to Assigned Employees</h5>
-                      {ticketError && <p className="text-xs text-red-500 mb-2">{ticketError}</p>}
-                      <form onSubmit={handleFileTicketSubmit} className="space-y-3">
-                        <input
-                          type="text"
-                          placeholder="Subject"
-                          value={ticketSubject}
-                          onChange={(e) => setTicketSubject(e.target.value)}
-                          required
-                          className="w-full text-xs px-3.5 py-2 border border-slate-200 bg-white rounded-xl focus:border-sap-500 focus:outline-none"
-                        />
-                        <textarea
-                          placeholder="Detailed description of issue..."
-                          value={ticketDesc}
-                          onChange={(e) => setTicketDesc(e.target.value)}
-                          required
-                          rows={3}
-                          className="w-full text-xs px-3.5 py-2 border border-slate-200 bg-white rounded-xl focus:border-sap-500 focus:outline-none"
-                        />
-                        <button
-                          type="submit"
-                          disabled={ticketLoading}
-                          className="py-1.5 px-4 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors disabled:opacity-55"
-                        >
-                          {ticketLoading ? 'Submitting...' : 'Dispatch Ticket'}
-                        </button>
-                      </form>
+                      <div className="mt-3.5 grid grid-cols-2 gap-3 text-xs text-slate-600 font-semibold">
+                        <p>Status: <strong className="text-sap-700 uppercase">{proj.status}</strong></p>
+                        <p>Created: {new Date(proj.created_at).toLocaleDateString()}</p>
+                      </div>
                     </div>
-
-                    {/* Tickets list */}
-                    <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
-                      {tickets.filter(t => t.client_id === userProfile.id).length === 0 ? (
-                        <p className="text-xs text-slate-400 py-3 text-center">No help tickets filed yet.</p>
-                      ) : (
-                        tickets.filter(t => t.client_id === userProfile.id).map(ticket => (
-                          <div key={ticket.id} className="py-3">
-                            <div className="flex justify-between items-start">
-                              <p className="text-xs font-bold text-slate-800">{ticket.subject}</p>
-                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
-                                ticket.status === 'open' ? 'bg-red-50 text-red-600 border border-red-200' :
-                                ticket.status === 'in_progress' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                                'bg-green-50 text-green-600 border border-green-200'
-                              }`}>
-                                {ticket.status}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{ticket.description}</p>
-                            <span className="text-[9px] text-slate-400 font-semibold block mt-1">
-                              Filed on: {new Date(ticket.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  ))}
+                  <p className="text-xs text-slate-400 mt-3 text-center">
+                    To file support tickets, navigate to your <strong className="text-emerald-600">B2B Client Portal</strong>.
+                  </p>
                 </div>
               )}
             </div>

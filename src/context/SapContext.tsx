@@ -10,6 +10,7 @@ import React, {
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@supabase/supabase-js";
 
+
 /* ================================================================
    1. TypeScript Interfaces
    ================================================================ */
@@ -1373,79 +1374,186 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
           .single();
         if (comp) setCompanyName(comp.name);
 
-        // Fetch notifications
+        // Fetch notifications scoped to this user
         const { data: notify } = await supabase
           .from("notifications")
           .select("*")
+          .eq("user_id", userProfile.id)
           .order("created_at", { ascending: false });
         if (notify) setNotifications(notify);
 
-        // Fetch projects based on role
-        const { data: projList } = await supabase
-          .from("projects")
-          .select("*")
-          .order("created_at", { ascending: false });
-        
-        if (projList) {
-          setProjects(projList);
-          
-          // Fetch feature flags for all loaded projects
-          const projIds = projList.map(p => p.id);
-          if (projIds.length > 0) {
-            const { data: flags } = await supabase
-              .from("feature_flags")
-              .select("*")
-              .in("project_id", projIds);
-            
-            if (flags) {
-              const flagsMap: Record<string, boolean> = {};
-              flags.forEach(f => {
-                flagsMap[f.project_id] = f.apex_joule_enabled;
-              });
-              setFeatureFlags(flagsMap);
+        // --- Role-scoped project fetching ---
+        if (userProfile.role === "admin") {
+          // Admin: fetch ALL projects in company
+          const { data: projList } = await supabase
+            .from("projects")
+            .select("*")
+            .eq("company_id", userProfile.company_id)
+            .order("created_at", { ascending: false });
+
+          if (projList) {
+            setProjects(projList);
+
+            // Fetch feature flags for all loaded projects
+            const projIds = projList.map((p) => p.id);
+            if (projIds.length > 0) {
+              const { data: flags } = await supabase
+                .from("feature_flags")
+                .select("*")
+                .in("project_id", projIds);
+              if (flags) {
+                const flagsMap: Record<string, boolean> = {};
+                flags.forEach((f) => { flagsMap[f.project_id] = f.apex_joule_enabled; });
+                setFeatureFlags(flagsMap);
+              }
             }
           }
-        }
 
-        // Fetch tickets
-        const { data: tix } = await supabase
-          .from("help_tickets")
-          .select("*")
-          .order("created_at", { ascending: false });
-        if (tix) setTickets(tix);
-
-        // Fetch assignments
-        let { data: assign } = await supabase
-          .from("project_assignments")
-          .select("*");
-        if (assign) {
-          if (userProfile.role === 'admin') {
-            assign = assign.filter(a => a.employee_id !== userProfile.id);
+          // Admin: fetch ALL assignments (but EXCLUDE any rows where employee_id === admin's own ID
+          // to prevent cross-contamination when an admin email is also used as an assignee)
+          const { data: allAssign } = await supabase
+            .from("project_assignments")
+            .select("*");
+          if (allAssign) {
+            setAssignments(allAssign.filter((a) => a.employee_id !== userProfile.id));
           }
-          setAssignments(assign);
-        }
 
-        // Admins can fetch all profiles (employees) and transactional emails
-        if (userProfile.role === "admin") {
+          // Admin: fetch tickets for all projects
+          const { data: tix } = await supabase
+            .from("help_tickets")
+            .select("*")
+            .order("created_at", { ascending: false });
+          if (tix) setTickets(tix);
+
+          // Admin: fetch all employee & admin profiles
           const { data: profileList } = await supabase
             .from("profiles")
-            .select("*");
+            .select("*")
+            .eq("company_id", userProfile.company_id);
           if (profileList) {
-            setEmployees(profileList.filter(p => p.role === "employee" || p.role === "admin"));
+            setEmployees(profileList.filter((p) => p.role === "employee" || p.role === "admin"));
           }
 
+          // Admin: fetch transactional emails log
           const { data: emailLogs } = await supabase
             .from("transactional_emails")
             .select("*")
             .order("sent_at", { ascending: false });
           if (emailLogs) setEmails(emailLogs);
+
         } else if (userProfile.role === "employee") {
-          // Employees can fetch the list of profiles in company
+          // Employee: fetch ONLY projects they are explicitly assigned to
+          const { data: myAssign } = await supabase
+            .from("project_assignments")
+            .select("*")
+            .eq("employee_id", userProfile.id);
+
+          if (myAssign && myAssign.length > 0) {
+            setAssignments(myAssign);
+            const assignedProjIds = myAssign.map((a) => a.project_id);
+            const { data: assignedProjs } = await supabase
+              .from("projects")
+              .select("*")
+              .in("id", assignedProjIds);
+            if (assignedProjs) {
+              setProjects(assignedProjs);
+
+              // Fetch feature flags for assigned projects
+              const { data: flags } = await supabase
+                .from("feature_flags")
+                .select("*")
+                .in("project_id", assignedProjIds);
+              if (flags) {
+                const flagsMap: Record<string, boolean> = {};
+                flags.forEach((f) => { flagsMap[f.project_id] = f.apex_joule_enabled; });
+                setFeatureFlags(flagsMap);
+              }
+
+              // Fetch tickets for assigned projects only
+              const { data: tix } = await supabase
+                .from("help_tickets")
+                .select("*")
+                .in("project_id", assignedProjIds)
+                .order("created_at", { ascending: false });
+              if (tix) setTickets(tix);
+            } else {
+              setProjects([]);
+              setTickets([]);
+            }
+          } else {
+            setAssignments([]);
+            setProjects([]);
+            setTickets([]);
+          }
+
+          // Employee: fetch profiles list for context (company members)
           const { data: profileList } = await supabase
             .from("profiles")
-            .select("*");
+            .select("*")
+            .eq("company_id", userProfile.company_id);
           if (profileList) {
-            setEmployees(profileList.filter(p => p.role === "employee" || p.role === "admin"));
+            setEmployees(profileList.filter((p) => p.role === "employee" || p.role === "admin"));
+          }
+
+        } else if (userProfile.role === "client") {
+          // Client: fetch ONLY the single project matching their email address
+          const { data: clientProjs } = await supabase
+            .from("projects")
+            .select("*")
+            .eq("client_email", userProfile.email)
+            .limit(1);
+
+          if (clientProjs && clientProjs.length > 0) {
+            const clientProj = clientProjs[0];
+            setProjects([clientProj]);
+
+            // Fetch feature flags for this specific project
+            const { data: flags } = await supabase
+              .from("feature_flags")
+              .select("*")
+              .eq("project_id", clientProj.id);
+            if (flags) {
+              const flagsMap: Record<string, boolean> = {};
+              flags.forEach((f) => { flagsMap[f.project_id] = f.apex_joule_enabled; });
+              setFeatureFlags(flagsMap);
+            }
+
+            // Fetch tickets filed by this client only
+            const { data: tix } = await supabase
+              .from("help_tickets")
+              .select("*")
+              .eq("client_id", userProfile.id)
+              .order("created_at", { ascending: false });
+            if (tix) setTickets(tix);
+
+            // Fetch assignments for the client's project to identify specialist team
+            const { data: projAssign } = await supabase
+              .from("project_assignments")
+              .select("*")
+              .eq("project_id", clientProj.id);
+            if (projAssign) {
+              setAssignments(projAssign);
+
+              // Fetch only the profiles of employees assigned to this project
+              const empIds = projAssign.map((a) => a.employee_id);
+              if (empIds.length > 0) {
+                const { data: empProfiles } = await supabase
+                  .from("profiles")
+                  .select("*")
+                  .in("id", empIds);
+                if (empProfiles) setEmployees(empProfiles);
+              } else {
+                setEmployees([]);
+              }
+            } else {
+              setAssignments([]);
+              setEmployees([]);
+            }
+          } else {
+            setProjects([]);
+            setTickets([]);
+            setAssignments([]);
+            setEmployees([]);
           }
         }
       } catch (err) {
@@ -1471,14 +1579,17 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
     };
   }, [userProfile]);
 
-  // Handle auth session state loading
+  // Handle auth session state loading — scoped strictly to SIGNED_IN / SIGNED_OUT events.
+  // This prevents cross-tab state bleeding: TOKEN_REFRESHED and INITIAL_SESSION events
+  // from another tab's shared localStorage session will NOT trigger a full profile reload.
   useEffect(() => {
     loadLiveDbData();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, _session) => {
+      if (event === 'SIGNED_IN') {
+        // A new user signed into THIS tab context — reload profile for this instance.
         loadLiveDbData();
-      } else {
-        // Clear all states on signout to scope context cleanly
+      } else if (event === 'SIGNED_OUT') {
+        // Clear all role-scoped states on logout to prevent dirty state from bleeding.
         setUserProfile(null);
         setProjects([]);
         setEmployees([]);
@@ -1486,7 +1597,11 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
         setTickets([]);
         setEmails([]);
         setNotifications([]);
+        setFeatureFlags({});
+        setDbLoading(false);
       }
+      // TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED etc. are intentionally ignored.
+      // They share the same localStorage token but do NOT indicate a user switch.
     });
     return () => subscription.unsubscribe();
   }, [loadLiveDbData]);
@@ -1520,14 +1635,16 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
       apex_joule_enabled: false // Off by default
     });
 
-    // 1. Explicitly register/invite the client email using Supabase Auth
+    // 1. Register/invite the client email via Supabase Auth using an isolated client
+    // (persistSession: false prevents this signUp from overwriting the admin's active session)
     const tempClient = createClient(
       import.meta.env.VITE_SUPABASE_URL || "",
       import.meta.env.VITE_SUPABASE_ANON_KEY || "",
       {
         auth: {
           persistSession: false,
-          autoRefreshToken: false
+          autoRefreshToken: false,
+          storageKey: `apexops-temp-client-${Date.now()}`, // Isolated storage key prevents session contamination
         }
       }
     );
@@ -1543,6 +1660,9 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
       }
     });
 
+    // Supabase signUp returns the existing user if the email is already registered
+    // without throwing an error (returns identities: [] for existing confirmed accounts).
+    // We treat both new registrations and existing accounts the same way.
     if (authError) {
       console.error("Client Auth registration failed:", authError);
       throw new Error(`Client Authentication registration failed: ${authError.message}`);
@@ -1553,16 +1673,20 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
       throw new Error("Client registration failed: No user ID was returned from Auth.");
     }
 
-    // 2. Insert corresponding row into the profiles table
+    // 2. Upsert the profiles row — handles both new clients and re-linked existing accounts
+    // without throwing a duplicate key error when the same client email is re-onboarded.
     const { error: profileError } = await supabase
       .from("profiles")
-      .insert({
-        id: clientUserId,
-        company_id: userProfile.company_id,
-        role: "client",
-        email: clientEmail,
-        full_name: "B2B Client"
-      });
+      .upsert(
+        {
+          id: clientUserId,
+          company_id: userProfile.company_id,
+          role: "client",
+          email: clientEmail,
+          full_name: "B2B Client"
+        },
+        { onConflict: "id" }
+      );
 
     if (profileError) {
       console.error("Client profile insertion failed:", profileError);
