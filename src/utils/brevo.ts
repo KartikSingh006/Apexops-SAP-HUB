@@ -4,44 +4,41 @@
  */
 
 export async function sendBrevoEmail(toEmail: string, subject: string, htmlContent: string): Promise<void> {
-  const host = "smtp-relay.brevo.com";
-  const username = "adc1b2001@smtp-brevo.com";
-  const password = "AKYVn31jvDhEqw2J";
-  const port = 587;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+  
+  if (!supabaseUrl || !anonKey) {
+    console.warn("Supabase configuration is missing. Edge function dispatch skipped.");
+    return;
+  }
+
+  // Derive the project ID from the URL or use URL directly
+  // Endpoint format: https://[project-id].supabase.co/functions/v1/send-system-email
+  const endpoint = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/send-system-email`;
 
   try {
-    const payload = {
-      Host: host,
-      Username: username,
-      Password: password,
-      Port: port,
-      To: toEmail,
-      From: "ApexOps Enterprise Suite <noreply@apexops.com>",
-      Subject: subject,
-      Body: htmlContent,
-      Action: "Send",
-      nocache: Math.random()
-    };
-
-    const bodyContent = "key=" + encodeURIComponent(JSON.stringify(payload));
-
-    const response = await fetch("https://smtpjs.com/v3/smtpjs.aspx", {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
+        "apikey": anonKey,
+        "Authorization": `Bearer ${anonKey}`,
       },
-      body: bodyContent,
+      body: JSON.stringify({
+        to: toEmail,
+        subject: subject,
+        htmlContent: htmlContent,
+      }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`SMTP email relay dispatch failed (HTTP ${response.status}):`, errorText);
+      console.error(`Edge function email dispatch failed (HTTP ${response.status}):`, errorText);
     } else {
-      const responseText = await response.text();
-      console.log(`SMTP email relay result for ${toEmail}:`, responseText);
+      console.log(`Edge function email successfully dispatched to ${toEmail}`);
     }
   } catch (error) {
-    console.error("Network error executing SMTP email relay dispatch:", error);
+    console.error("Network error executing Edge function email dispatch:", error);
   }
 }
 
