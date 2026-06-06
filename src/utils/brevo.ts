@@ -4,39 +4,44 @@
  */
 
 export async function sendBrevoEmail(toEmail: string, subject: string, htmlContent: string): Promise<void> {
-  const apiKey = import.meta.env.VITE_BREVO_API_KEY;
-  if (!apiKey) {
-    console.warn("Brevo API key (VITE_BREVO_API_KEY) is missing. Email dispatch skipped.");
-    return;
-  }
+  const host = "smtp-relay.brevo.com";
+  const username = "adc1b2001@smtp-brevo.com";
+  const password = "AKYVn31jvDhEqw2J";
+  const port = 587;
 
   try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/emails", {
+    const payload = {
+      Host: host,
+      Username: username,
+      Password: password,
+      Port: port,
+      To: toEmail,
+      From: "ApexOps Enterprise Suite <noreply@apexops.com>",
+      Subject: subject,
+      Body: htmlContent,
+      Action: "Send",
+      nocache: Math.random()
+    };
+
+    const bodyContent = "key=" + encodeURIComponent(JSON.stringify(payload));
+
+    const response = await fetch("https://smtpjs.com/v3/smtpjs.aspx", {
       method: "POST",
       headers: {
-        "accept": "application/json",
-        "api-key": apiKey,
-        "content-type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({
-        sender: {
-          name: "ApexOps Enterprise Suite",
-          email: "noreply@apexops.com",
-        },
-        to: [{ email: toEmail }],
-        subject,
-        htmlContent,
-      }),
+      body: bodyContent,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Brevo email dispatch failed (HTTP ${response.status}):`, errorText);
+      console.error(`SMTP email relay dispatch failed (HTTP ${response.status}):`, errorText);
     } else {
-      console.log(`Brevo transactional email successfully dispatched to ${toEmail}`);
+      const responseText = await response.text();
+      console.log(`SMTP email relay result for ${toEmail}:`, responseText);
     }
   } catch (error) {
-    console.error("Network error executing Brevo email dispatch:", error);
+    console.error("Network error executing SMTP email relay dispatch:", error);
   }
 }
 
