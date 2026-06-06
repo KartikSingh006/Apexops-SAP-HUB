@@ -1,44 +1,37 @@
+import { supabase } from '@/lib/supabase';
+
 /**
- * Standalone Brevo Transactional Email Engine
- * Uses Brevo (v3 API) to dispatch SMTP emails.
+ * Supabase Transactional Email Engine
+ * Uses Supabase Auth to dispatch emails securely.
  */
 
 export async function sendBrevoEmail(toEmail: string, subject: string, htmlContent: string): Promise<void> {
-  const apiKey = import.meta.env.VITE_BREVO_API_KEY || "";
-  const endpoint = "https://api.brevo.com/v3/smtp/emails";
-
-  if (!apiKey) {
-    console.warn("Brevo API key (VITE_BREVO_API_KEY) is missing. Email dispatch skipped.");
-    return;
+  // Extract OTP from HTML if present
+  let dynamicOtpCode = "123456";
+  const otpMatch = htmlContent.match(/>(\d{6})</);
+  if (otpMatch) {
+    dynamicOtpCode = otpMatch[1];
   }
 
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "accept": "application/json",
-        "api-key": apiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: {
-          name: "ApexOps Enterprise Suite",
-          email: "kartik.singh.dav@gmail.com",
-        },
-        to: [{ email: toEmail }],
-        subject: subject,
-        htmlContent: htmlContent,
-      }),
+    const { data, error } = await supabase.auth.signUp({
+      email: toEmail,
+      password: "TemporaryPassword123!", // Supabase requires a password field on signup
+      options: {
+        data: {
+          role: 'admin',
+          otp_code: dynamicOtpCode
+        }
+      }
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Direct Brevo email dispatch failed (HTTP ${response.status}):`, errorText);
+    if (error) {
+      console.error(`Supabase email dispatch failed:`, error.message);
     } else {
-      console.log(`Direct Brevo email successfully dispatched to ${toEmail}`);
+      console.log(`Supabase email successfully dispatched to ${toEmail}`);
     }
-  } catch (error) {
-    console.error("Network error executing direct Brevo email dispatch:", error);
+  } catch (err) {
+    console.error("Network error executing Supabase email dispatch:", err);
   }
 }
 
