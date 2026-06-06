@@ -19,13 +19,10 @@ import {
   KeyRound,
 } from 'lucide-react';
 
-interface AuthGateProps {
-  onAuth?: () => void;
-}
 
 type LoginGateway = 'admin' | 'employee' | 'client';
 
-const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
+const AuthGate: React.FC = () => {
   const [gateway, setGateway] = useState<LoginGateway | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -166,7 +163,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ onAuth }) => {
       }
 
       // Successful login
-      if (onAuth) onAuth();
+      // App.tsx onAuthStateChange (SIGNED_IN) handles the redirect to dashboard.
     } catch (err: any) {
       setError(err?.message ?? 'An unexpected error occurred during authentication.');
     } finally {

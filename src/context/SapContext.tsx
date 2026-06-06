@@ -1238,12 +1238,18 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
      6. Multi-tenant Live Database Actions & Loaders
      ================================================================ */
 
-  // Load complete live multi-tenant sets from database
+  // Load complete live multi-tenant sets from database.
+  // The ONLY source of truth for a user's role is the `role` column in the
+  // `profiles` table, looked up exclusively by the authenticated user's auth.uid().
+  // No email-string overrides, no role inference from email patterns, no client-side
+  // fallback profiles. If the profiles row does not exist, the user sees an error
+  // screen and must contact their administrator — we never assign a role by guessing.
   const loadLiveDbData = useCallback(async () => {
     try {
       setDbLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
         setUserProfile(null);
         setDbLoading(false);
         return;
@@ -1251,7 +1257,7 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
 
       const userId = session.user.id;
 
-      // 1. Fetch user profile
+      // Authoritative single-row lookup: auth.uid() -> profiles.id -> role
       const { data: profile, error: profileErr } = await supabase
         .from("profiles")
         .select("*")
@@ -1259,98 +1265,31 @@ export const SapProvider: React.FC<SapProviderProps> = ({ children }) => {
         .single();
 
       if (profileErr || !profile) {
-        // Critical Fallback Override
-        if (session.user.email === 'kartik.singh.dav@gmail.com') {
-          console.warn("Critical Fallback triggered: Explicit override for admin profile.");
-          let compId = "00000000-0000-0000-0000-000000000000";
-          try {
-            const { data: comps } = await supabase.from("companies").select("id").limit(1);
-            if (comps && comps.length > 0) {
-              compId = comps[0].id;
-            } else {
-              const { data: newComp } = await supabase
-                .from("companies")
-                .insert({ name: "ApexOps Global Headquarters" })
-                .select("id")
-                .single();
-              if (newComp) compId = newComp.id;
-            }
-          } catch (e) {
-            console.error("Failed to query or create company during admin override fallback:", e);
-          }
-
-          setUserProfile({
-            id: userId,
-            company_id: compId,
-            role: 'admin',
-            email: 'kartik.singh.dav@gmail.com',
-            full_name: 'Kartik Singh',
-            created_at: new Date().toISOString()
-          });
-        } else {
-          // Self-heal profile auto-provisioning
-          try {
-            const userEmail = session.user.email || "";
-            console.log("No profile record found. Provisioning profile for user:", userEmail);
-            
-            // Fetch or create default company
-            let compId = "";
-            const { data: compList } = await supabase.from("companies").select("*").limit(1);
-            if (compList && compList.length > 0) {
-              compId = compList[0].id;
-            } else {
-              const { data: newComp, error: newCompErr } = await supabase
-                .from("companies")
-                .insert({ name: "ApexOps Global Headquarters" })
-                .select()
-                .single();
-              if (newCompErr) throw newCompErr;
-              compId = newComp.id;
-            }
-
-            // Determine role: ends with corporate domain or contains "admin" => admin / employee
-            let assignedRole: "admin" | "employee" | "client" = "employee";
-            if (userEmail.toLowerCase().includes("admin") || userEmail.toLowerCase().includes("owner")) {
-              assignedRole = "admin";
-            } else if (session.user.user_metadata?.role === "client") {
-              assignedRole = "client";
-            }
-
-            const { data: provProfile, error: provErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: userId,
-                company_id: compId,
-                role: assignedRole,
-                email: userEmail,
-                full_name: session.user.user_metadata?.full_name || userEmail.split("@")[0]
-              })
-              .select()
-              .single();
-
-            if (provErr) throw provErr;
-            setUserProfile(provProfile);
-          } catch (provFailErr) {
-            console.error("Self-heal provisioning failed, setting generic fallback profile to prevent UI hang:", provFailErr);
-            setUserProfile({
-              id: userId,
-              company_id: "00000000-0000-0000-0000-000000000000",
-              role: "employee",
-              email: session.user.email || "user@corporate.com",
-              full_name: session.user.user_metadata?.full_name || "Enterprise User",
-              created_at: new Date().toISOString()
-            });
-          }
-        }
-      } else {
-        setUserProfile(profile);
+        // Profile row does not exist in the database.
+        // This is a genuine configuration gap — the administrator must insert a profiles row
+        // for this auth.uid() with the correct role before the user can access the platform.
+        // We do NOT guess roles from email addresses, user_metadata, or any other heuristic.
+        console.error(
+          `[ApexOps] No profiles row found for auth.uid()=${userId}. ` +
+          `An administrator must provision a profiles record with the correct role ` +
+          `('admin' | 'employee' | 'client') for this user. ` +
+          `Database error: ${profileErr?.message ?? "Row not found"}`
+        );
+        setUserProfile(null);
+        setDbLoading(false);
+        return;
       }
+
+      // Role is read verbatim from the database — never derived from email patterns.
+      setUserProfile(profile);
     } catch (error) {
-      console.error("Error loading live user session / profile setup:", error);
+      console.error("[ApexOps] Unexpected error during profile resolution:", error);
+      setUserProfile(null);
     } finally {
       setDbLoading(false);
     }
   }, []);
+
 
   // Fetch live tables based on profile scope
   useEffect(() => {

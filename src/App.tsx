@@ -10,35 +10,42 @@ import WarehouseAudit from '@/pages/WarehouseAudit';
 import MaintenanceHub from '@/pages/MaintenanceHub';
 import type { Session } from '@supabase/supabase-js';
 
+/**
+ * AppContent — Inner content tree, mounted only after a valid Supabase session exists.
+ *
+ * Session isolation contract:
+ *   - This component is only rendered when App detects a SIGNED_IN session.
+ *   - It is fully unmounted when App detects SIGNED_OUT, which triggers React's
+ *     cleanup lifecycle across the entire SapProvider context tree, clearing all
+ *     in-memory role, project, and assignment state without any explicit manual reset.
+ *   - SapProvider re-initialises fresh with every new mount, so concurrent tabs
+ *     using different sessions never share in-memory context state.
+ */
 function AppContent({ currentPage, handleNavigate }: {
   currentPage: string;
   handleNavigate: (page: string) => void;
 }) {
   const { userProfile, projects, isJouleEnabledForProject } = useSap();
 
-  // Check if ApexJoule should be visible
+  // ApexJoule AI assistant visibility:
+  //   - Admin / Employee: always shown (their workspace always has access)
+  //   - Client: only shown when the admin has toggled the feature flag ON for their project
   const isJouleVisible = useMemo(() => {
     if (!userProfile) return false;
-    if (userProfile.role !== 'client') return true; // Always visible for admin/employees
-    
-    // For clients, find their project and check feature flags
+    if (userProfile.role !== 'client') return true;
     const clientProj = projects.find(p => p.client_email === userProfile.email);
     if (!clientProj) return false;
-    
     return isJouleEnabledForProject(clientProj.id);
   }, [userProfile, projects, isJouleEnabledForProject]);
 
+  // Page-level routing:
+  //   - Client role is hard-blocked from navigating to warehouse/maintenance pages.
+  //   - All other routing is handled inside Dashboard.tsx via the role switch/case guard.
   const renderPage = () => {
-    if (!userProfile) {
-      return (
-        <div className="flex items-center justify-center min-h-[60vh] bg-slate-50">
-          <p className="text-slate-500 font-semibold">Loading user workspace...</p>
-        </div>
-      );
-    }
-    
-    // Security restriction: client role is blocked from non-dashboard pages
-    const activePage = (userProfile.role === 'client' && currentPage !== 'dashboard') ? 'dashboard' : currentPage;
+    const activePage =
+      userProfile?.role === 'client' && currentPage !== 'dashboard'
+        ? 'dashboard'
+        : currentPage;
 
     switch (activePage) {
       case 'dashboard':
@@ -58,43 +65,55 @@ function AppContent({ currentPage, handleNavigate }: {
         {renderPage()}
       </Layout>
       <ODataStream />
-      {/* Conditionally render ApexJoule based on admin custom add-on toggle for clients */}
       {isJouleVisible && <ApexJoule onNavigate={handleNavigate} />}
     </>
   );
 }
 
+/**
+ * App — Root component. Manages only the Supabase auth session layer.
+ *
+ * Cross-tab session isolation:
+ *   The onAuthStateChange listener is scoped STRICTLY to SIGNED_IN and SIGNED_OUT.
+ *   TOKEN_REFRESHED, INITIAL_SESSION, and USER_UPDATED are intentionally ignored
+ *   because they propagate across all tabs via shared localStorage — responding to them
+ *   causes open login pages in one tab to auto-convert when a user signs in on another tab.
+ *
+ * SapProvider mount/unmount lifecycle:
+ *   SapProvider is only mounted when `session` is truthy and fully unmounted on sign-out.
+ *   This means React's cleanup lifecycle automatically clears all context state on logout
+ *   without needing explicit manual state resets scattered throughout the codebase.
+ */
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
 
   useEffect(() => {
-    // Initial session load only — reads the current tab's session state.
+    // Read the current tab's session state on mount — does NOT broadcast to other tabs.
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession);
       setLoading(false);
     });
 
-    // Scope listener STRICTLY to SIGNED_IN and SIGNED_OUT.
-    // TOKEN_REFRESHED and INITIAL_SESSION events are intentionally ignored:
-    // they propagate across tabs via shared localStorage but do NOT represent
-    // a user action in THIS tab. Responding to them causes cross-tab state
-    // bleeding where logging in on tab B forces tab A's login page to convert.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (event === 'SIGNED_IN') {
+        // A genuine sign-in action occurred in THIS tab.
         setSession(newSession);
+        setCurrentPage('dashboard');
         setLoading(false);
-        setCurrentPage('dashboard'); // Always reset to dashboard on fresh login
       } else if (event === 'SIGNED_OUT') {
+        // User explicitly signed out — clear session and reset navigation.
+        // SapProvider unmounts automatically, clearing all in-memory role/context state.
         setSession(null);
         setCurrentPage('dashboard');
         setLoading(false);
       }
-      // All other events (TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED, etc.)
-      // are deliberately ignored to prevent inter-tab contamination.
+      // TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED — deliberately ignored.
+      // These events fire across all tabs via shared localStorage and must NOT
+      // cause an independent tab's auth state to change.
     });
 
     return () => subscription.unsubscribe();
@@ -104,6 +123,7 @@ function App() {
     setCurrentPage(page);
   }, []);
 
+  // ── App-level loading screen (Supabase SDK initialising) ─────────────────
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -127,10 +147,14 @@ function App() {
     );
   }
 
+  // ── No active session — show the login page ──────────────────────────────
   if (!session) {
-    return <AuthGate onAuth={() => {}} />;
+    return <AuthGate />;
   }
 
+  // ── Active session — mount the full application inside SapProvider ───────
+  // SapProvider is mounted fresh here and will be completely unmounted on sign-out,
+  // automatically cleaning all in-memory context state via React's lifecycle.
   return (
     <SapProvider>
       <AppContent
