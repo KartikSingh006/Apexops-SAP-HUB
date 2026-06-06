@@ -23,7 +23,7 @@ export async function sendBrevoEmail(toEmail: string, subject: string, htmlConte
       body: JSON.stringify({
         sender: {
           name: "ApexOps Enterprise Suite",
-          email: "adc1b2001@smtp-brevo.com",
+          email: "kartik.singh.dav@gmail.com",
         },
         to: [{ email: toEmail }],
         subject: subject,
