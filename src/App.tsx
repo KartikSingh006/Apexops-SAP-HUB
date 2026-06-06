@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { SapProvider, useSap } from '@/context/SapContext';
-import AuthGate from '@/pages/AuthGate';
+import LandingPage from '@/pages/LandingPage';
 import Layout from '@/components/Layout';
 import ODataStream from '@/components/ODataStream';
 import ApexJoule from '@/components/ApexJoule';
@@ -11,15 +11,14 @@ import MaintenanceHub from '@/pages/MaintenanceHub';
 import type { Session } from '@supabase/supabase-js';
 
 /**
- * AppContent — Inner content tree, mounted only after a valid Supabase session exists.
+ * AppContent — Inner application shell, mounted exclusively when a valid Supabase session exists.
  *
  * Session isolation contract:
- *   - This component is only rendered when App detects a SIGNED_IN session.
- *   - It is fully unmounted when App detects SIGNED_OUT, which triggers React's
- *     cleanup lifecycle across the entire SapProvider context tree, clearing all
- *     in-memory role, project, and assignment state without any explicit manual reset.
- *   - SapProvider re-initialises fresh with every new mount, so concurrent tabs
- *     using different sessions never share in-memory context state.
+ *   - Rendered only when App's `session` state is truthy (SIGNED_IN event fired in THIS tab).
+ *   - Fully unmounted on SIGNED_OUT, triggering React's cleanup lifecycle across the entire
+ *     SapProvider tree — no manual state resets required.
+ *   - SapProvider re-initialises fresh with every new mount, so tabs using different sessions
+ *     never share in-memory React context state.
  */
 function AppContent({ currentPage, handleNavigate }: {
   currentPage: string;
@@ -27,9 +26,7 @@ function AppContent({ currentPage, handleNavigate }: {
 }) {
   const { userProfile, projects, isJouleEnabledForProject } = useSap();
 
-  // ApexJoule AI assistant visibility:
-  //   - Admin / Employee: always shown (their workspace always has access)
-  //   - Client: only shown when the admin has toggled the feature flag ON for their project
+  // ApexJoule AI assistant: visible to admin/employee always; for clients only when admin has toggled ON
   const isJouleVisible = useMemo(() => {
     if (!userProfile) return false;
     if (userProfile.role !== 'client') return true;
@@ -38,9 +35,7 @@ function AppContent({ currentPage, handleNavigate }: {
     return isJouleEnabledForProject(clientProj.id);
   }, [userProfile, projects, isJouleEnabledForProject]);
 
-  // Page-level routing:
-  //   - Client role is hard-blocked from navigating to warehouse/maintenance pages.
-  //   - All other routing is handled inside Dashboard.tsx via the role switch/case guard.
+  // Client role is hard-blocked from navigating to warehouse/maintenance pages
   const renderPage = () => {
     const activePage =
       userProfile?.role === 'client' && currentPage !== 'dashboard'
@@ -48,14 +43,10 @@ function AppContent({ currentPage, handleNavigate }: {
         : currentPage;
 
     switch (activePage) {
-      case 'dashboard':
-        return <Dashboard />;
-      case 'warehouse':
-        return <WarehouseAudit />;
-      case 'maintenance':
-        return <MaintenanceHub />;
-      default:
-        return <Dashboard />;
+      case 'dashboard':   return <Dashboard />;
+      case 'warehouse':   return <WarehouseAudit />;
+      case 'maintenance': return <MaintenanceHub />;
+      default:            return <Dashboard />;
     }
   };
 
@@ -71,18 +62,13 @@ function AppContent({ currentPage, handleNavigate }: {
 }
 
 /**
- * App — Root component. Manages only the Supabase auth session layer.
+ * App — Root authentication and session layer.
  *
  * Cross-tab session isolation:
- *   The onAuthStateChange listener is scoped STRICTLY to SIGNED_IN and SIGNED_OUT.
- *   TOKEN_REFRESHED, INITIAL_SESSION, and USER_UPDATED are intentionally ignored
- *   because they propagate across all tabs via shared localStorage — responding to them
- *   causes open login pages in one tab to auto-convert when a user signs in on another tab.
- *
- * SapProvider mount/unmount lifecycle:
- *   SapProvider is only mounted when `session` is truthy and fully unmounted on sign-out.
- *   This means React's cleanup lifecycle automatically clears all context state on logout
- *   without needing explicit manual state resets scattered throughout the codebase.
+ *   onAuthStateChange only reacts to SIGNED_IN and SIGNED_OUT.
+ *   TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED are ignored — they propagate
+ *   across tabs via shared localStorage and must NOT cause an independent tab's
+ *   auth state to change, preventing the "login on tab B converts tab A" bug.
  */
 function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -90,77 +76,65 @@ function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
 
   useEffect(() => {
-    // Read the current tab's session state on mount — does NOT broadcast to other tabs.
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      setSession(currentSession);
+    // Read the CURRENT TAB's existing session without broadcasting cross-tab
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
       setLoading(false);
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, newSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (event === 'SIGNED_IN') {
-        // A genuine sign-in action occurred in THIS tab.
         setSession(newSession);
         setCurrentPage('dashboard');
         setLoading(false);
       } else if (event === 'SIGNED_OUT') {
-        // User explicitly signed out — clear session and reset navigation.
-        // SapProvider unmounts automatically, clearing all in-memory role/context state.
+        // SapProvider unmounts automatically — all context state is cleared by React's lifecycle
         setSession(null);
         setCurrentPage('dashboard');
         setLoading(false);
       }
-      // TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED — deliberately ignored.
-      // These events fire across all tabs via shared localStorage and must NOT
-      // cause an independent tab's auth state to change.
+      // TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED — intentionally ignored
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleNavigate = useCallback((page: string) => {
-    setCurrentPage(page);
-  }, []);
+  const handleNavigate = useCallback((page: string) => setCurrentPage(page), []);
 
-  // ── App-level loading screen (Supabase SDK initialising) ─────────────────
+  // ── Initialising ─────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center space-y-4 animate-fade-in">
-          <div className="relative">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sap-500 to-indigo-500 flex items-center justify-center mx-auto">
-              <svg width="32" height="32" viewBox="0 0 100 100" className="animate-pulse">
-                <path d="M25 70 L50 25 L75 70 Z" fill="none" stroke="white" strokeWidth="6" strokeLinejoin="round"/>
-                <circle cx="50" cy="55" r="7" fill="white"/>
-              </svg>
-            </div>
+      <div className="min-h-screen bg-[#020818] flex items-center justify-center">
+        <div className="text-center space-y-6 animate-fade-in">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center mx-auto shadow-2xl shadow-indigo-500/30">
+            <svg width="32" height="32" viewBox="0 0 100 100">
+              <path d="M25 70 L50 25 L75 70 Z" fill="none" stroke="white" strokeWidth="6" strokeLinejoin="round" className="animate-pulse"/>
+              <circle cx="50" cy="55" r="7" fill="white"/>
+            </svg>
           </div>
-          <p className="text-slate-600 text-sm font-medium tracking-wide">Initializing ApexOps...</p>
-          <div className="flex items-center justify-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-sap-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-            <div className="w-2 h-2 rounded-full bg-sap-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-            <div className="w-2 h-2 rounded-full bg-sap-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+          <div>
+            <p className="text-white font-bold text-lg">ApexOps SAP Hub</p>
+            <p className="text-slate-500 text-sm mt-1">Initializing enterprise platform...</p>
+          </div>
+          <div className="flex items-center justify-center gap-1.5">
+            {[0, 150, 300].map(delay => (
+              <div key={delay} className="w-2 h-2 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: `${delay}ms` }} />
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
-  // ── No active session — show the login page ──────────────────────────────
+  // ── No session — show the full marketing + auth landing page ─────────────
   if (!session) {
-    return <AuthGate />;
+    return <LandingPage />;
   }
 
-  // ── Active session — mount the full application inside SapProvider ───────
-  // SapProvider is mounted fresh here and will be completely unmounted on sign-out,
-  // automatically cleaning all in-memory context state via React's lifecycle.
+  // ── Active session — mount full application inside isolated SapProvider ───
   return (
     <SapProvider>
-      <AppContent
-        currentPage={currentPage}
-        handleNavigate={handleNavigate}
-      />
+      <AppContent currentPage={currentPage} handleNavigate={handleNavigate} />
     </SapProvider>
   );
 }
