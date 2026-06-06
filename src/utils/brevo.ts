@@ -11,7 +11,7 @@ export async function sendBrevoEmail(toEmail: string, subject: string, htmlConte
   }
 
   try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    const response = await fetch("https://api.brevo.com/v3/smtp/emails", {
       method: "POST",
       headers: {
         "accept": "application/json",
