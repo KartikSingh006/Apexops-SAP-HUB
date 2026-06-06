@@ -4,28 +4,28 @@
  */
 
 export async function sendBrevoEmail(toEmail: string, subject: string, htmlContent: string): Promise<void> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-  
-  if (!supabaseUrl || !anonKey) {
-    console.warn("Supabase configuration is missing. Edge function dispatch skipped.");
+  const apiKey = import.meta.env.VITE_BREVO_API_KEY || "";
+  const endpoint = "https://api.brevo.com/v3/smtp/emails";
+
+  if (!apiKey) {
+    console.warn("Brevo API key (VITE_BREVO_API_KEY) is missing. Email dispatch skipped.");
     return;
   }
-
-  // Derive the project ID from the URL or use URL directly
-  // Endpoint format: https://[project-id].supabase.co/functions/v1/send-system-email
-  const endpoint = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/send-system-email`;
 
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "apikey": anonKey,
-        "Authorization": `Bearer ${anonKey}`,
+        "accept": "application/json",
+        "api-key": apiKey,
+        "content-type": "application/json",
       },
       body: JSON.stringify({
-        to: toEmail,
+        sender: {
+          name: "ApexOps Enterprise Suite",
+          email: "noreply@apexops.com",
+        },
+        to: [{ email: toEmail }],
         subject: subject,
         htmlContent: htmlContent,
       }),
@@ -33,12 +33,12 @@ export async function sendBrevoEmail(toEmail: string, subject: string, htmlConte
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Edge function email dispatch failed (HTTP ${response.status}):`, errorText);
+      console.error(`Direct Brevo email dispatch failed (HTTP ${response.status}):`, errorText);
     } else {
-      console.log(`Edge function email successfully dispatched to ${toEmail}`);
+      console.log(`Direct Brevo email successfully dispatched to ${toEmail}`);
     }
   } catch (error) {
-    console.error("Network error executing Edge function email dispatch:", error);
+    console.error("Network error executing direct Brevo email dispatch:", error);
   }
 }
 
