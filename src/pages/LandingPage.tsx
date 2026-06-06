@@ -5,6 +5,7 @@ import {
   BarChart3, Globe, ChevronRight, ArrowRight, CheckCircle2, Hash, Briefcase,
   UserCheck, KeyRound, AlertCircle, X, Star, Zap, Database, Activity,
 } from 'lucide-react';
+import { sendBrevoEmail, getOtpHtml } from '@/utils/brevo';
 
 type Gateway = 'admin-register' | 'admin-login' | 'employee' | 'client' | null;
 
@@ -63,6 +64,10 @@ const LandingPage: React.FC = () => {
         throw new Error('All fields are required.');
       }
       if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+
+      // Dispatch Brevo OTP email in the background
+      sendBrevoEmail(email.trim(), "ApexOps Verification Code", getOtpHtml(fullName.trim(), mockOtp))
+        .catch(err => console.error("Error sending OTP email:", err));
 
       // Simulate OTP dispatch
       setOtpMode(true);

@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@supabase/supabase-js";
+import { sendBrevoEmail, getClientWelcomeHtml, getEmployeeAssignmentHtml } from "@/utils/brevo";
 
 
 /* ================================================================
@@ -1653,6 +1654,10 @@ To sign in, please navigate to the Client Gateway on the Welcome Page and log in
 
     sendPushAlert("Project Established", `Project ${name} (${uniqueId}) created. Client account established.`);
 
+    // Dispatch Brevo welcome email to client inbox in the background
+    sendBrevoEmail(clientEmail, "Welcome to ApexOps SAP Hub - Client Onboarding Details", getClientWelcomeHtml(clientEmail, uniqueId))
+      .catch(err => console.error("Error sending client welcome email via Brevo:", err));
+
     return project;
   }, [userProfile]);
 
@@ -1681,7 +1686,7 @@ To sign in, please navigate to the Client Gateway on the Welcome Page and log in
     let targetUid = employeeId;
     const { data: lookupProfile, error: lookupErr } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, email, full_name")
       .or(`id.eq.${employeeId},email.eq.${employeeId}`)
       .maybeSingle();
 
@@ -1739,6 +1744,15 @@ Please login to your ApexOps corporate workspace to review project requirements 
       });
 
       sendPushAlert("Work Allocation Registered", `Employee allocated to project. Task dispatch notification sent.`);
+
+      // Dispatch Brevo notification email in the background
+      const empEmail = lookupProfile?.email || assignedEmp.email;
+      const empName = lookupProfile?.full_name || (assignedEmp as any).full_name || "Specialist";
+      sendBrevoEmail(
+        empEmail,
+        "Notification: Project Allocation Confirmed",
+        getEmployeeAssignmentHtml(empName, assignedProj?.name || "Active ERP Module", assignedProj?.unique_project_id || projectId)
+      ).catch(err => console.error("Error sending employee assignment email via Brevo:", err));
     } catch (e) {
       console.error("Assignment dispatch error:", e);
     }
